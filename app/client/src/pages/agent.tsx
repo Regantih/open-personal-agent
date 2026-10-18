@@ -140,6 +140,8 @@ function Conversation({ state }: { state: StateSnapshot }) {
   const { toast } = useToast();
   const [text, setText] = useState("");
   const [pendingText, setPendingText] = useState<string | null>(null);
+  const lastMsg = state.messages[state.messages.length - 1];
+  const pendingCommitted = pendingText !== null && lastMsg?.role === "user" && lastMsg.text === pendingText;
   const endRef = useRef<HTMLDivElement>(null);
   const pending = state.approvals.filter((a) => a.status === "pending");
 
@@ -166,7 +168,9 @@ function Conversation({ state }: { state: StateSnapshot }) {
           {state.messages.map((m) => <MessageBubble key={m.id} m={m} />)}
           {pendingText && (
             <>
-              <div className="flex justify-end"><div className="max-w-[75%] rounded-2xl rounded-br-md bg-foreground px-3.5 py-2.5 text-sm text-background opacity-70"><span className="bubble-text">{pendingText}</span></div></div>
+              {!pendingCommitted && (
+                <div className="flex justify-end"><div className="max-w-[75%] rounded-2xl rounded-br-md bg-foreground px-3.5 py-2.5 text-sm text-background opacity-70"><span className="bubble-text">{pendingText}</span></div></div>
+              )}
               <div className="flex items-center gap-2 text-sm text-muted-foreground" data-testid="status-thinking">
                 <span className="flex gap-1"><span className="h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground [animation-delay:-0.2s]" /><span className="h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground [animation-delay:-0.1s]" /><span className="h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground" /></span>
                 Working: planning, checking policy, calling tools
