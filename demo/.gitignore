@@ -3,3 +3,11 @@ rec*/
 shots/arialbd.ttf
 check*.png
 v-*.png
+*.mp4.tmp
+body.mp4
+silent.mp4
+t-*.mp4
+concat.txt
+test-voice.mp3
+*.elevenlabs-key.txt
+.elevenlabs-key*
