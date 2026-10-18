@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/Regantih/open-personal-agent/main/spec/open-memory-format/schema.json",
+  "title": "Open Memory Format (OMF) v0.1",
+  "description": "A portable, user-owned export of what a personal agent knows about a user. Every fact carries provenance, consent scope, confidence, and expiry.",
+  "type": "object",
+  "required": ["omf_version", "subject", "exported_at", "facts"],
+  "additionalProperties": false,
+  "properties": {
+    "omf_version": { "const": "0.1" },
+    "subject": {
+      "type": "object",
+      "description": "The user this memory belongs to.",
+      "required": ["id"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "description": "Stable pseudonymous identifier chosen by the exporting agent." },
+        "display_name": { "type": "string" },
+        "locale": { "type": "string", "examples": ["en-US"] },
+        "timezone": { "type": "string", "examples": ["America/Chicago"] }
+      }
+    },
+    "exported_at": { "type": "string", "format": "date-time" },
+    "exported_by": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "agent": { "type": "string" },
+        "agent_version": { "type": "string" }
+      }
+    },
+    "facts": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/fact" }
+    },
+    "people": {
+      "type": "array",
+      "description": "People the user interacts with, and what their agents may access.",
+      "items": { "$ref": "#/$defs/person" }
+    },
+    "grants": {
+      "type": "array",
+      "description": "Permissions the user granted to the agent itself. Secrets are never exported; only references and scopes.",
+      "items": { "$ref": "#/$defs/grant" }
+    }
+  },
+  "$defs": {
+    "scope": {
+      "type": "string",
+      "description": "Consent scope vocabulary. Format: domain or domain.subdomain, optionally suffixed with :read or :write.",
+      "pattern": "^[a-z_]+(\\.[a-z_]+)*(:(read|write))?$",
+      "examples": ["calendar.work:read", "email.inbox:read", "travel.preferences", "payments:write", "health"]
+    },
+    "fact": {
+      "type": "object",
+      "required": ["id", "category", "statement", "source", "created_at"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "category": {
+          "type": "string",
+          "enum": ["preference", "profile", "habit", "relationship", "account", "goal", "constraint", "event", "other"]
+        },
+        "key": { "type": "string", "description": "Optional machine key, e.g. travel.seat_preference.", "examples": ["travel.seat_preference"] },
+        "statement": { "type": "string", "description": "Human-readable fact, e.g. 'Prefers aisle seats on flights over 2 hours.'" },
+        "value": { "description": "Optional structured value." },
+        "source": {
+          "type": "object",
+          "required": ["type"],
+          "additionalProperties": false,
+          "properties": {
+            "type": { "type": "string", "enum": ["user_stated", "inferred", "imported", "third_party"] },
+            "channel": { "type": "string", "examples": ["sms", "email", "voice", "imessage", "app"] },
+            "reference": { "type": "string", "description": "Pointer to the originating message or event in the exporting agent's log." }
+          }
+        },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "scope": { "$ref": "#/$defs/scope" },
+        "sensitivity": { "type": "string", "enum": ["low", "medium", "high", "special_category"], "default": "low" },
+        "created_at": { "type": "string", "format": "date-time" },
+        "updated_at": { "type": "string", "format": "date-time" },
+        "expires_at": { "type": ["string", "null"], "format": "date-time" },
+        "supersedes": { "type": "array", "items": { "type": "string" }, "description": "IDs of facts this fact replaces." }
+      }
+    },
+    "person": {
+      "type": "object",
+      "required": ["id", "name", "relationship"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "relationship": { "type": "string", "examples": ["spouse", "colleague", "friend", "assistant", "family"] },
+        "contact": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "email": { "type": "string" },
+            "phone": { "type": "string" },
+            "agent_card_url": { "type": "string", "description": "A2A Agent Card URL for this person's agent, if known." }
+          }
+        },
+        "shared_scopes": {
+          "type": "array",
+          "description": "Scopes this person's agent may access.",
+          "items": { "$ref": "#/$defs/scope" }
+        },
+        "notify_on_out_of_scope": { "type": "boolean", "default": true }
+      }
+    },
+    "grant": {
+      "type": "object",
+      "required": ["service", "scopes", "granted_at"],
+      "additionalProperties": false,
+      "properties": {
+        "service": { "type": "string", "examples": ["google_calendar", "gmail", "plaid", "uber"] },
+        "scopes": { "type": "array", "items": { "type": "string" } },
+        "granted_at": { "type": "string", "format": "date-time" },
+        "revoked_at": { "type": ["string", "null"], "format": "date-time" },
+        "credential_ref": { "type": "string", "description": "Opaque vault reference. Never the secret itself." }
+      }
+    }
+  }
+}

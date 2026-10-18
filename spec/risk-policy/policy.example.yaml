@@ -1,0 +1,62 @@
+# Risk Policy v0.1 example. Conservative defaults.
+version: "0.1"
+
+tiers:
+  T0:
+    name: read
+    rule: allow_within_scope
+  T1:
+    name: reversible_write
+    rule: allow_and_summarize
+  T2:
+    name: acts_as_user
+    rule: require_category_opt_in
+  T3:
+    name: money_or_irreversible
+    rule: require_confirmation
+    confirmation:
+      show: [amount, currency, merchant, refundability, payment_method]
+      bind_to: mandate        # approval is bound to this exact amount and merchant
+      expires_after_seconds: 600
+
+actions:
+  - match: "calendar.read"
+    tier: T0
+  - match: "email.read"
+    tier: T0
+  - match: "search.*"
+    tier: T0
+  - match: "calendar.create_hold"
+    tier: T1
+  - match: "email.draft"
+    tier: T1
+  - match: "email.send"
+    tier: T2
+  - match: "message.send_to_contact"
+    tier: T2
+  - match: "booking.create.refundable"
+    tier: T2
+  - match: "booking.create.nonrefundable"
+    tier: T3
+  - match: "payment.*"
+    tier: T3
+  - match: "subscription.cancel"
+    tier: T3
+  - match: "data.share_third_party"
+    tier: T3
+  - match: "call.outbound.business"
+    tier: T2
+    requirements: [ai_disclosure, recording_consent_check]
+
+untrusted_origin:
+  sources: [email_body, web_content, attachment, external_agent]
+  escalate_by: 1             # T1 becomes T2, T2 becomes T3
+
+limits:
+  default_standing_limit_usd: 0     # every T3 action needs confirmation until the user sets a limit
+  max_daily_spend_usd: 500
+  max_outbound_calls_per_hour: 10
+
+kill_switch:
+  phrases: ["stop everything", "pause all"]
+  actions: [pause_all_tasks, freeze_agent_cards, revoke_browser_sessions]
