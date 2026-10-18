@@ -2,7 +2,7 @@ process.env.TZ = process.env.OPA_TIMEZONE || "America/Chicago";
 import Database from "better-sqlite3";
 import { randomBytes } from "node:crypto";
 import type {
-  AgentEvent, Approval, Booking, CalendarItem, Fact, InboxEmail, Message, Outbox, Subscription,
+  ActionSuggestion, AgentEvent, Approval, Booking, CalendarItem, Fact, InboxEmail, Message, Outbox, Subscription,
 } from "@shared/schema";
 
 const DB_PATH = process.env.OPA_DB_PATH || "data.db";
@@ -201,13 +201,20 @@ const DAY = 86400000;
 function at(daysFromNow: number, hour: number, minute = 0) {
   const d = new Date(Date.now() + daysFromNow * DAY); d.setHours(hour, minute, 0, 0); return d.getTime();
 }
+export const DEFAULT_SUGGESTIONS: ActionSuggestion[] = [
+  { label: "Calendar this week", prompt: "What's on my calendar this week?" },
+  { label: "Check my inbox", prompt: "Check my inbox and handle anything important" },
+  { label: "Unused subscriptions", prompt: "Which subscriptions am I not using?" },
+  { label: "Aisle seat rule", prompt: "Remember I prefer aisle seats on flights over 2 hours" },
+];
+
 export function seed(force = false) {
   const has = sqlite.prepare("SELECT COUNT(*) AS c FROM messages").get() as { c: number };
   const seeded = getSetting<boolean>("seeded", false);
   if (seeded && !force) return;
   if (force) {
     for (const t of ["messages", "events", "facts", "calendar", "inbox", "approvals", "bookings", "subscriptions", "outbox"]) sqlite.prepare(`DELETE FROM ${t}`).run();
-    sqlite.prepare("DELETE FROM settings WHERE key IN ('paused','standing_limit_usd','opt_ins')").run();
+    sqlite.prepare("DELETE FROM settings WHERE key IN ('paused','standing_limit_usd','opt_ins','action_suggestions')").run();
   }
   void has;
   addCalendar("Board prep with finance team", at(1, 9), at(1, 10, 30), "event", "Zoom");

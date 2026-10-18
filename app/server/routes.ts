@@ -36,6 +36,7 @@ function snapshot(): StateSnapshot {
       tracing: tracingEnabled(),
       orchestrator: orchestratorName(),
     },
+    suggestions: db.getSetting("action_suggestions", db.DEFAULT_SUGGESTIONS),
     policy: { version: policy.version, defaultTier: policy.default_tier ?? "T3", actions: policy.actions.map((a) => ({ match: a.match, tier: a.tier })) },
   };
 }
@@ -57,6 +58,17 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   db.seed();
   const orch = await orchestrator();
   console.log(`[opa] policy loaded from ${policyPath}; planner=${models.planner} fast=${models.fast} provider=${providerName()} orchestrator=${orch.name}`);
+
+  // Scheduled proactive lane: OPA_PROACTIVE_INTERVAL_MINUTES>0 runs the batch
+  // check (proactive summary + action buttons) even while the user is away.
+  const proactiveMins = Number(process.env.OPA_PROACTIVE_INTERVAL_MINUTES || 0);
+  if (proactiveMins > 0) {
+    setInterval(() => {
+      if (db.getSetting("paused", false)) return;
+      orch.runBackground().catch((e: any) => db.logEvent("error", `Scheduled background check failed: ${e.message}`, null));
+    }, proactiveMins * 60_000).unref();
+    console.log(`[opa] proactive lane every ${proactiveMins}m`);
+  }
 
   app.get("/api/health", (_req, res) => res.json({ ok: true }));
   app.get("/api/state", (_req, res) => res.json(snapshot()));

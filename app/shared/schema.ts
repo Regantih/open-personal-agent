@@ -163,6 +163,11 @@ export interface Settings {
   orchestrator: string;
 }
 
+export interface ActionSuggestion {
+  label: string;
+  prompt: string;
+}
+
 export interface StateSnapshot {
   messages: Message[];
   approvals: Approval[];
@@ -174,6 +179,7 @@ export interface StateSnapshot {
   subscriptions: Subscription[];
   outbox: Outbox[];
   settings: Settings;
+  suggestions: ActionSuggestion[];
   policy: { version: string; defaultTier: Tier; actions: { match: string; tier: Tier }[] };
 }
 

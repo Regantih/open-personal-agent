@@ -17,13 +17,10 @@ import {
 
 const REPO_URL = "https://github.com/Regantih/open-personal-agent";
 
-const SUGGESTIONS = [
-  "What's on my calendar this week?",
-  "Find me a flight from DFW to SFO next Monday afternoon",
-  "Which subscriptions am I not using?",
-  "Check my inbox and handle what needs doing",
-  "Remember I prefer aisle seats on flights over 2 hours",
-  "stop everything",
+const FALLBACK_SUGGESTIONS = [
+  { label: "Calendar this week", prompt: "What's on my calendar this week?" },
+  { label: "Check my inbox", prompt: "Check my inbox and handle anything important" },
+  { label: "Unused subscriptions", prompt: "Which subscriptions am I not using?" },
 ];
 
 const tierLabel: Record<Tier, string> = { T0: "Read", T1: "Reversible", T2: "Acts as you", T3: "Money / irreversible" };
@@ -190,10 +187,10 @@ function Conversation({ state }: { state: StateSnapshot }) {
             </div>
           )}
           <div className="chip-row mb-2 flex gap-2 overflow-x-auto pb-1 pr-6 sm:flex-wrap sm:overflow-visible sm:pr-0" role="list" aria-label="Suggestions">
-            {SUGGESTIONS.map((s, i) => (
-              <button key={s} role="listitem" onClick={() => submit(s)} disabled={send.isPending} data-testid={`button-suggestion-${i}`}
+            {(state.suggestions.length ? state.suggestions : FALLBACK_SUGGESTIONS).map((s, i) => (
+              <button key={s.label} role="listitem" onClick={() => submit(s.prompt)} disabled={send.isPending} data-testid={`button-suggestion-${i}`}
                 className="shrink-0 rounded-full border bg-card px-3 py-1 text-xs text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground disabled:opacity-50">
-                {s}
+                {s.label}
               </button>
             ))}
           </div>
