@@ -77,14 +77,15 @@ async function main() {
   check("email: owner command answered", mailResp.status === 200 && mailJson.delivered === "replied" && /board prep/i.test(mailJson.reply ?? ""), `status=${mailResp.status} body=${JSON.stringify(mailJson).slice(0, 200)}`);
 
   // --- Email: third-party mail goes to the inbox, not the agent ---
-  const inboxBefore = db.listInbox().length;
+  const store = db.storeFor(db.LOCAL_USER);
+  const inboxBefore = (await store.listInbox()).length;
   const third = await fetch(`${base}/api/channels/email`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-opa-email-secret": "email_secret_123" },
     body: JSON.stringify({ from: "newsletter@outside.example", to: "me@example.com", subject: "Weekly digest", text: "hi" }),
   });
   const thirdJson: any = await third.json();
-  check("email: third-party mail delivered to inbox", third.status === 200 && thirdJson.delivered === "inbox" && db.listInbox().length === inboxBefore + 1, `status=${third.status}`);
+  check("email: third-party mail delivered to inbox", third.status === 200 && thirdJson.delivered === "inbox" && (await store.listInbox()).length === inboxBefore + 1, `status=${third.status}`);
 
   // --- Email: no secret rejected ---
   const noAuth = await fetch(`${base}/api/channels/email`, {
@@ -94,9 +95,8 @@ async function main() {
   });
   check("email: missing secret rejected with 403", noAuth.status === 403, `status=${noAuth.status}`);
 
-  httpServer.close();
   console.log(`\n${pass} passed, ${fail} failed.`);
-  process.exit(fail ? 1 : 0);
+  httpServer.close(() => setTimeout(() => process.exit(fail ? 1 : 0), 50));
 }
 
 main().catch((e) => {

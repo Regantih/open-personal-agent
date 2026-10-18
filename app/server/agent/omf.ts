@@ -4,7 +4,7 @@ import Ajv2020Mod from "ajv/dist/2020";
 import addFormatsMod from "ajv-formats";
 const Ajv2020: any = (Ajv2020Mod as any).default ?? Ajv2020Mod;
 const addFormats: any = (addFormatsMod as any).default ?? addFormatsMod;
-import * as db from "./db";
+import type { Store } from "./db";
 import { timezone } from "./agent";
 
 // Open Memory Format v0.1 export and import, validated against the shared spec schema.
@@ -21,8 +21,8 @@ const validate = ajv.compile(JSON.parse(readFileSync(schemaPath(), "utf8")));
 
 const iso = (ms: number | null) => (ms === null ? null : new Date(ms).toISOString());
 
-export function exportOMF() {
-  const facts = db.listFacts().map((f) => ({
+export async function exportOMF(store: Store, userId: string) {
+  const facts = (await store.listFacts()).map((f) => ({
     id: f.id, category: f.category, ...(f.key ? { key: f.key } : {}), statement: f.statement,
     source: { type: f.sourceType, ...(f.channel ? { channel: f.channel } : {}), ...(f.reference ? { reference: f.reference } : {}) },
     confidence: f.confidence, scope: f.scope, sensitivity: f.sensitivity, created_at: iso(f.createdAt)!, expires_at: iso(f.expiresAt),
@@ -30,7 +30,7 @@ export function exportOMF() {
   }));
   const doc = {
     omf_version: "0.1",
-    subject: { id: "u_local", locale: "en-US", timezone },
+    subject: { id: userId, locale: "en-US", timezone },
     exported_at: new Date().toISOString(),
     exported_by: { agent: "open-personal-agent", agent_version: "0.2.0" },
     facts,
@@ -44,18 +44,18 @@ export function exportOMF() {
   return doc;
 }
 
-export function importOMF(doc: unknown): { imported: number } {
+export async function importOMF(store: Store, doc: unknown): Promise<{ imported: number }> {
   if (!validate(doc)) throw new Error("Not a valid OMF v0.1 document: " + ajv.errorsText(validate.errors));
   const d = doc as any;
   let n = 0;
   for (const f of d.facts) {
-    db.insertFact({
+    await store.insertFact({
       category: f.category, key: f.key ?? null, statement: f.statement, sourceType: "imported", channel: "omf_import",
       reference: `${d.exported_by?.agent ?? "unknown"}:${f.id}`, confidence: f.confidence ?? 1, scope: f.scope ?? "other",
       sensitivity: f.sensitivity ?? "low", expiresAt: f.expires_at ? Date.parse(f.expires_at) : null,
     });
     n++;
   }
-  db.logEvent("memory", `Imported ${n} facts from OMF export by ${d.exported_by?.agent ?? "unknown agent"}`, { imported: n });
+  await store.logEvent("memory", `Imported ${n} facts from OMF export by ${d.exported_by?.agent ?? "unknown agent"}`, { imported: n });
   return { imported: n };
 }

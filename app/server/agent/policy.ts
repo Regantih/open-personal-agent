@@ -2,7 +2,7 @@ import { readFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import YAML from "yaml";
 import type { Tier } from "@shared/schema";
-import { getSetting } from "./db";
+import type { Store } from "./db";
 
 // Loads the shared Risk Policy spec (../spec/risk-policy/policy.example.yaml) and evaluates actions against it.
 
@@ -60,23 +60,23 @@ export type Decision =
   | { outcome: "needs_approval"; tier: Tier; baseTier: Tier; escalated: boolean; reason: string; matched: string | null }
   | { outcome: "block"; tier: Tier; baseTier: Tier; escalated: boolean; reason: string; matched: string | null };
 
-export function evaluate(action: string, ctx: { tainted: boolean; amountUsd?: number | null }): Decision {
+export async function evaluate(action: string, ctx: { tainted: boolean; amountUsd?: number | null; store: Store }): Promise<Decision> {
   const { tier: baseTier, rule: matched } = matchTier(action);
   const escalated = ctx.tainted && !!policy.untrusted_origin;
   const tier = escalated ? escalate(baseTier, policy.untrusted_origin!.escalate_by) : baseTier;
-  const paused = getSetting<boolean>("paused", false);
+  const paused = await ctx.store.getSetting<boolean>("paused", false);
   const base = { tier, baseTier, escalated, matched };
 
   if (paused && tier !== "T0") return { outcome: "block", ...base, reason: "Agent is paused by the kill switch. Only read actions are allowed until the user resumes." };
   if (tier === "T0") return { outcome: "allow", ...base, reason: "T0 read within granted scope" };
   if (tier === "T1") return { outcome: "allow", ...base, reason: "T1 reversible write; reported in activity log" };
   if (tier === "T2") {
-    const optIns = getSetting<string[]>("opt_ins", []);
+    const optIns = await ctx.store.getSetting<string[]>("opt_ins", []);
     if (!escalated && optIns.includes(action)) return { outcome: "allow", ...base, reason: `T2 allowed: user opted in to category "${action}"` };
     return { outcome: "needs_approval", ...base, reason: escalated ? "Escalated to T2 because untrusted content is in context" : `T2 requires category opt-in for "${action}"` };
   }
   // T3
-  const standing = getSetting<number>("standing_limit_usd", limits.defaultStandingLimitUsd);
+  const standing = await ctx.store.getSetting<number>("standing_limit_usd", limits.defaultStandingLimitUsd);
   if (!escalated && ctx.amountUsd != null && ctx.amountUsd > 0 && ctx.amountUsd <= standing)
     return { outcome: "allow", ...base, reason: `T3 within standing limit of $${standing}` };
   return { outcome: "needs_approval", ...base, reason: escalated ? "Escalated because untrusted content (email or web) is in context; explicit confirmation required" : "T3 money or irreversible action requires explicit confirmation" };

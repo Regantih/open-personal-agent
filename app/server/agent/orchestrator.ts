@@ -11,30 +11,28 @@
 //
 // Task granularity is deliberately coarse — one durable workflow per user-visible
 // task — matching how a production deployment would bound retry units.
+//
+// All methods take userId (not the in-memory Ctx) because workflow arguments
+// must serialize; the activity reconstructs the store from the id.
 
 import { fileURLToPath } from "node:url";
-import * as db from "./db";
-import { handleInbound, decideApproval, runBackground } from "./agent";
-
-export interface TaskRun {
-  kind: "turn" | "approval" | "background";
-  args: unknown[];
-}
+import { storeFor } from "./db";
+import { handleInbound, decideApproval, runBackground, ctxFor } from "./agent";
 
 export interface Orchestrator {
   name: string;
   init(): Promise<void>;
-  runTurn(text: string, channel: string): Promise<string>;
-  runApproval(id: number, decision: "approve" | "deny", allowCategory: boolean, via: string): Promise<{ ok: boolean; message: string }>;
-  runBackground(): Promise<string>;
+  runTurn(userId: string, text: string, channel: string): Promise<string>;
+  runApproval(userId: string, id: number, decision: "approve" | "deny", allowCategory: boolean, via: string): Promise<{ ok: boolean; message: string }>;
+  runBackground(userId: string): Promise<string>;
 }
 
 const inline: Orchestrator = {
   name: "inline",
   async init() {},
-  runTurn: (text, channel) => handleInbound(text, channel as any),
-  runApproval: (id, decision, allowCategory, via) => decideApproval(id, decision, allowCategory, via),
-  runBackground: () => runBackground(),
+  runTurn: (userId, text, channel) => handleInbound(ctxFor(userId), text, channel as any),
+  runApproval: (userId, id, decision, allowCategory, via) => decideApproval(ctxFor(userId), id, decision, allowCategory, via),
+  runBackground: (userId) => runBackground(ctxFor(userId)),
 };
 
 const temporal: Orchestrator = {
@@ -63,9 +61,9 @@ const temporal: Orchestrator = {
       taskQueue,
       namespace,
     });
-    void worker.run().catch((e: any) => db.logEvent("error", `Temporal worker exited: ${e.message}`, null));
+    void worker.run().catch((e: any) => storeFor("_platform").logEvent("error", `Temporal worker exited: ${e.message}`, null));
     this.taskQueue = taskQueue;
-    db.logEvent("policy", `Orchestrator: temporal (server ${address}, namespace ${namespace}, queue ${taskQueue})`, null);
+    storeFor("_platform").logEvent("policy", `Orchestrator: temporal (server ${address}, namespace ${namespace}, queue ${taskQueue})`, null);
   },
   client: null,
   taskQueue: "opa-agent",
@@ -79,14 +77,14 @@ const temporal: Orchestrator = {
     });
     return handle.result();
   },
-  runTurn(this: any, text: string, channel: string) {
-    return this.startWorkflow("agentTurnWorkflow", [text, channel]);
+  runTurn(this: any, userId: string, text: string, channel: string) {
+    return this.startWorkflow("agentTurnWorkflow", [userId, text, channel]);
   },
-  runApproval(this: any, id: number, decision: string, allowCategory: boolean, via: string) {
-    return this.startWorkflow("approvalDecisionWorkflow", [id, decision, allowCategory, via]);
+  runApproval(this: any, userId: string, id: number, decision: string, allowCategory: boolean, via: string) {
+    return this.startWorkflow("approvalDecisionWorkflow", [userId, id, decision, allowCategory, via]);
   },
-  runBackground(this: any) {
-    return this.startWorkflow("backgroundCheckWorkflow", []);
+  runBackground(this: any, userId: string) {
+    return this.startWorkflow("backgroundCheckWorkflow", [userId]);
   },
 } as Orchestrator & Record<string, any>;
 
@@ -97,7 +95,7 @@ export async function orchestrator(): Promise<Orchestrator> {
     try {
       await picked.init();
     } catch (e: any) {
-      db.logEvent("error", `Temporal init failed (${e.message}); falling back to inline orchestrator`, null);
+      storeFor("_platform").logEvent("error", `Temporal init failed (${e.message}); falling back to inline orchestrator`, null);
       picked = inline;
     }
   }

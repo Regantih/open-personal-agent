@@ -100,14 +100,20 @@ export function validInboundEmailAuth(req: { headers: Record<string, any>; body:
   return false;
 }
 
-// An email is a command for the agent only if it comes from the owner.
-// If AGENT_EMAIL is set, it must also be addressed there; otherwise any
-// authenticated owner mail counts. With OWNER_EMAIL unset nothing is a command.
+// An email is a command for the agent only if it comes from an address bound
+// to a user. In multi-user mode the caller resolves the user via channel
+// bindings (see db.findUserByChannel). Single-user mode keeps the env path.
 export function isAgentAddressed(mail: InboundEmail): boolean {
   const owner = (process.env.OWNER_EMAIL || "").toLowerCase();
   if (!owner || !mail.from.toLowerCase().includes(owner)) return false;
   const agentAddr = (process.env.AGENT_EMAIL || "").toLowerCase();
   return !agentAddr || mail.to.toLowerCase().includes(agentAddr);
+}
+
+// Extract the bare address from "Name <a@b.c>" or "a@b.c".
+export function bareAddress(s: string): string {
+  const m = /<([^>]+)>/.exec(s);
+  return (m ? m[1] : s).trim().toLowerCase();
 }
 
 export function emailInboundConfigured(): boolean {

@@ -1,6 +1,5 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import type { Approval, Mandate } from "@shared/schema";
-import { mandateSecret } from "./db";
 
 // Mandates follow the shape of Google's Agent Payments Protocol (AP2): an
 // intent mandate captures what the user agreed to in natural language, and a
@@ -17,7 +16,9 @@ function canonical(obj: unknown): string {
 }
 export const paramsHash = (p: unknown) => createHash("sha256").update(canonical(p)).digest("hex");
 
-export function signMandate(a: Approval, ttlMs: number): Mandate {
+// The HMAC key is per user (store.mandateSecret()) so one user's mandates can
+// never verify under another user's key.
+export function signMandate(a: Approval, ttlMs: number, secret: string): Mandate {
   const now = Date.now();
   const body = {
     version: "opa-mandate-0.2" as const,
@@ -51,13 +52,13 @@ export function signMandate(a: Approval, ttlMs: number): Mandate {
           : null,
     },
   };
-  const signature = createHmac("sha256", mandateSecret()).update(canonical(body)).digest("hex");
+  const signature = createHmac("sha256", secret).update(canonical(body)).digest("hex");
   return { ...body, signature };
 }
 
-export function verifyMandate(m: Mandate, a: Approval): { ok: boolean; reason?: string } {
+export function verifyMandate(m: Mandate, a: Approval, secret: string): { ok: boolean; reason?: string } {
   const { signature, ...body } = m;
-  const expected = createHmac("sha256", mandateSecret()).update(canonical(body)).digest("hex");
+  const expected = createHmac("sha256", secret).update(canonical(body)).digest("hex");
   if (expected.length !== signature.length || !timingSafeEqual(Buffer.from(expected), Buffer.from(signature))) return { ok: false, reason: "signature mismatch" };
   if (Date.now() > m.expires_at) return { ok: false, reason: "mandate expired" };
   if (m.approval_id !== a.id || m.action !== a.action) return { ok: false, reason: "mandate bound to a different action" };

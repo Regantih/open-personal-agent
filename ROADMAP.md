@@ -26,6 +26,17 @@
 - [x] Langfuse tracing (optional, via `LANGFUSE_*` env vars)
 - [x] 50-task eval suite (`npm run eval`)
 
+## v0.2.5: Multi-user foundation
+
+- [x] Opt-in multi-tenant mode (`OPA_MULTI_USER=1`): `user_id` scoping on every domain table behind a `Store` interface; single-user `local` mode unchanged by default
+- [x] Passwordless auth: email magic links + SMS OTP, hashed session tokens, sign-in UI
+- [x] Channel bindings: inbound SMS routes by bound `From` number; inbound email routes by per-user `agent+<token>@` address
+- [x] BYOK vault: user model keys AES-256-GCM encrypted at rest, per-turn credential resolution, usage metering + free-tier turn cap
+- [x] Per-user mandate secrets — a mandate cannot verify across tenants
+- [x] Tenancy eval suite (t01–t08): isolation, bindings, auth tokens, BYOK, usage, sessions
+- [ ] Postgres store driver (the `Store` interface is async so this is a drop-in)
+- [ ] Deploy story (Dockerfile/fly.toml), real Twilio A2P number, inbound email on an owned domain
+
 ## v0.3: Voice and Payments
 
 - [ ] Voice via LiveKit Agents or Pipecat

@@ -15,7 +15,8 @@ This is a reference implementation of the [playbook](../docs/). It is small on p
 - Memory: facts carry provenance, scope, confidence, and expiry. Export validates against the OMF schema; import accepts any valid OMF v0.1 file.
 - Two model lanes: a planner model for real-time turns and a fast model for the background check (proactive digest). Anthropic by default; any OpenAI-compatible endpoint (vLLM, Ollama, Groq) works too.
 - An append-only activity log of every message, model call, policy decision, approval, and execution. Optional Langfuse tracing mirrors every turn, generation, and tool call.
-- A 50-task eval suite (`npm run eval`) exercises the whole pipeline — policy, approvals, taint escalation, kill switch, memory — with a scripted model, no API key needed.
+- Optional multi-user mode: passwordless sign-in (email magic link or SMS OTP), per-user storage isolation, per-user mandate secrets, per-user agent email addresses, channel binding, and encrypted bring-your-own-model-key (BYOK) vaulting with a free-tier turn cap.
+- A 58-task eval suite (`npm run eval`) exercises the whole pipeline — policy, approvals, taint escalation, kill switch, memory, and tenancy isolation — with a scripted model, no API key needed.
 
 ## Real vs. sample
 
@@ -32,7 +33,8 @@ This is a reference implementation of the [playbook](../docs/). It is small on p
 | Single-use cards, cancellations | Simulated |
 | Orchestration | Pluggable: inline loop (default) or Temporal durable workflows (`OPA_ORCHESTRATOR=temporal`) |
 | Tracing | Built-in event log plus optional Langfuse mirror (`LANGFUSE_*` env vars) |
-| Eval suite | 50 deterministic tasks (`npm run eval`) |
+| Multi-user | Opt-in (`OPA_MULTI_USER=1`): magic-link/OTP sign-in, per-user stores, BYOK vault, per-user agent email |
+| Eval suite | 58 deterministic tasks (`npm run eval`) |
 
 ## Run it
 
@@ -68,13 +70,17 @@ Run from the `app/` directory so it can find `../spec/risk-policy/policy.example
 | `OPA_FAST_MODEL` | Batch lane model | sandbox default |
 | `OPA_TIMEZONE` | User timezone | `America/Chicago` |
 | `OPA_DB_PATH` | SQLite file | `data.db` |
+| `OPA_MULTI_USER` | `1` enables multi-tenant mode (sign-in, per-user stores, BYOK) | off — single `local` user |
+| `MASTER_KEY` | Hex/base64 key encrypting stored user model keys | generated and stored in platform settings |
+| `OPA_FREE_PLANNER_TURNS` | Planner turns/day for users without a BYOK key | `25` |
 | `POLICY_PATH` | Risk policy YAML | `../spec/risk-policy/policy.example.yaml` |
 | `OMF_SCHEMA_PATH` | OMF JSON schema | `../spec/open-memory-format/schema.json` |
 | `MANDATE_SECRET` | HMAC key for mandates | generated and stored in the DB |
 | `TWILIO_AUTH_TOKEN` | Verifies inbound SMS signatures | SMS disabled if unset |
 | `PUBLIC_BASE_URL` | Public URL Twilio calls, used in signature checks | none |
-| `OWNER_PHONE` | Only this E.164 number may text the agent | any verified sender |
-| `OPA_BACKGROUND_INTERVAL_MIN` | Run the proactive check every N minutes | off |
+| `OWNER_PHONE` | Only this E.164 number may text the agent (single-user mode) | any verified sender |
+| `OPA_BACKGROUND_INTERVAL_MIN` | Run the proactive check every N minutes (all users) | off |
+| `OPA_PROACTIVE_INTERVAL_MINUTES` | Run the proactive check + action buttons every N minutes | off |
 | `EMAIL_CHANNEL_SECRET` | Shared secret for `POST /api/channels/email` | inbound email disabled if unset |
 | `MAILGUN_SIGNING_KEY` | Alternative: verify Mailgun webhook signatures | shared-secret mode if unset |
 | `OWNER_EMAIL` | Only this address may command the agent by email | inbound mail goes to inbox only |
@@ -111,6 +117,17 @@ Inbound (`POST /api/channels/email`): point your provider's inbound parse/forwar
 
 Outbound: the default is the simulated outbox. Set `RESEND_API_KEY` + `EMAIL_FROM` or `SMTP_URL` (+ `EMAIL_FROM`) for real delivery; `send_email` uses whichever is configured.
 
+### Multi-user mode
+
+`OPA_MULTI_USER=1` turns the app into a multi-tenant service:
+
+- **Sign-in is passwordless.** `/api/auth/magic-link` emails a single-use link; `/api/auth/phone/request` + `/api/auth/phone/verify` sign in by SMS code. Sessions are opaque tokens in an httpOnly cookie; only SHA-256 hashes are stored. With the simulated senders, the API returns `devLink`/`devCode` so the flow works with no mail/SMS provider.
+- **Every domain table is scoped by `user_id`.** Messages, facts, approvals, bookings, settings, usage — a user can only ever see their own rows. Each user also gets their own mandate secret, so mandates cannot verify across tenants.
+- **Channels bind to accounts.** Under Settings → Linked channels, a user verifies a phone number or email by code/link. Inbound SMS routes by `From`; inbound email routes by per-user agent address (`agent+<token>@<domain>`) — bound senders issue commands, everyone else lands in that user's inbox as untrusted content.
+- **BYOK.** Users can store their own Anthropic/OpenAI-compatible key (`AES-256-GCM` under `MASTER_KEY`). Their key bills them; without one, `OPA_FREE_PLANNER_TURNS` caps planner turns per day on the platform key.
+
+Single-user remains the default: `OPA_MULTI_USER` unset → every request resolves to the `local` user, `OWNER_PHONE`/`OWNER_EMAIL` gate channels, and nothing else changes.
+
 ### Temporal orchestration
 
 The default orchestrator runs each task inline. For durable workflows — retries, timeouts, execution history across restarts — install the SDK and switch backends:
@@ -125,8 +142,8 @@ Each inbound turn, approval decision, and background check becomes a workflow (`
 ### Evals and channel tests
 
 ```bash
-npm run eval            # 50 deterministic tasks; no API key needed
-npm run eval -- e14     # run one task
+npm run eval            # 58 deterministic tasks; no API key needed
+npm run eval -- e14     # run one task (e50–t08 cover channels + tenancy)
 npm run test:channels   # signed SMS + email webhooks against a live server
 ```
 
@@ -162,18 +179,27 @@ Set `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` (and `LANGFUSE_BASE_URL` for
 
 | Method | Path | Purpose |
 | --- | --- | --- |
+| GET | `/api/auth/session` | Current sign-in state |
+| POST | `/api/auth/magic-link` | `{ email }` — send a sign-in link |
+| GET | `/api/auth/verify` | Consume a magic link, set the session cookie |
+| POST | `/api/auth/phone/request` + `/api/auth/phone/verify` | SMS-code sign-in |
+| POST | `/api/auth/logout` | End the session |
 | GET | `/api/state` | Full snapshot for the UI |
 | POST | `/api/messages` | `{ text }`, returns `{ reply }` |
 | POST | `/api/approvals/:id` | `{ decision: "approve" or "deny", allowCategory? }` |
 | POST | `/api/settings` | `{ paused?, standingLimitUsd?, revokeOptIn? }` |
 | POST | `/api/background/run` | Run the proactive check now |
+| GET/POST/DELETE | `/api/keys` | BYOK model keys: list providers, store (encrypted), remove |
+| GET/POST | `/api/channels` + `/api/channels/bind*` | List bindings, verify a phone/email onto the account |
 | GET | `/api/memory/export` | Download OMF v0.1 JSON |
 | POST | `/api/memory/import` | Import an OMF v0.1 document |
 | POST | `/api/memory/:id/forget` | Remove one fact |
 | DELETE | `/api/memory` | Delete all memory |
 | POST | `/api/reset` | Reset sample data |
-| POST | `/api/channels/sms` | Twilio inbound webhook |
+| POST | `/api/channels/sms` | Twilio inbound webhook (signature-verified) |
 | POST | `/api/channels/email` | Inbound email webhook (Mailgun-signed or shared secret) |
+
+All `/api` routes except auth, `/api/health`, and the two webhooks require a session in multi-user mode.
 
 ## License
 

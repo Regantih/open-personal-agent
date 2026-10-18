@@ -10,19 +10,20 @@ const { handleInboundActivity, decideApprovalActivity, runBackgroundActivity } =
   retry: { maximumAttempts: 3 },
 });
 
-export async function agentTurnWorkflow(text: string, channel: string): Promise<string> {
-  return handleInboundActivity(text, channel);
+export async function agentTurnWorkflow(userId: string, text: string, channel: string): Promise<string> {
+  return handleInboundActivity(userId, text, channel);
 }
 
 export async function approvalDecisionWorkflow(
+  userId: string,
   id: number,
   decision: "approve" | "deny",
   allowCategory: boolean,
   via: string,
 ): Promise<{ ok: boolean; message: string }> {
-  return decideApprovalActivity(id, decision, allowCategory, via);
+  return decideApprovalActivity(userId, id, decision, allowCategory, via);
 }
 
-export async function backgroundCheckWorkflow(): Promise<string> {
-  return runBackgroundActivity();
+export async function backgroundCheckWorkflow(userId: string): Promise<string> {
+  return runBackgroundActivity(userId);
 }

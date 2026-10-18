@@ -31,18 +31,27 @@ export interface ModelRequest {
   messages: CanonicalMessage[];
   maxTokens: number;
 }
+// Per-call credentials: BYOK users' decrypted keys are passed here so a single
+// process can serve many users on different providers/keys. Absent auth falls
+// back to the platform env configuration.
+export interface CallAuth { provider?: "anthropic" | "openai"; apiKey?: string; baseUrl?: string }
 export interface ModelProvider {
   name: string;
-  complete(req: ModelRequest): Promise<ModelOutput>;
+  complete(req: ModelRequest, auth?: CallAuth): Promise<ModelOutput>;
 }
 
 // ---------- anthropic ----------
-let anthropicClient: Anthropic | null = null;
+const anthropicClients = new Map<string, Anthropic>();
+function anthropicFor(apiKey?: string): Anthropic {
+  const k = apiKey || "";
+  let c = anthropicClients.get(k);
+  if (!c) { c = apiKey ? new Anthropic({ apiKey }) : new Anthropic(); anthropicClients.set(k, c); }
+  return c;
+}
 const anthropicProvider: ModelProvider = {
   name: "anthropic",
-  async complete(req) {
-    if (!anthropicClient) anthropicClient = new Anthropic();
-    const resp = await anthropicClient.messages.create({
+  async complete(req, auth) {
+    const resp = await anthropicFor(auth?.apiKey).messages.create({
       model: req.model,
       max_tokens: req.maxTokens,
       system: req.system,
@@ -91,10 +100,11 @@ function toOpenAIMessages(system: string, messages: CanonicalMessage[]): OaiMess
 
 const openaiProvider: ModelProvider = {
   name: "openai-compatible",
-  async complete(req) {
-    const base = (process.env.OPA_OPENAI_BASE_URL || "http://localhost:8000/v1").replace(/\/$/, "");
+  async complete(req, auth) {
+    const base = (auth?.baseUrl || process.env.OPA_OPENAI_BASE_URL || "http://localhost:8000/v1").replace(/\/$/, "");
     const headers: Record<string, string> = { "Content-Type": "application/json" };
-    if (process.env.OPA_OPENAI_API_KEY) headers.Authorization = `Bearer ${process.env.OPA_OPENAI_API_KEY}`;
+    const apiKey = auth?.apiKey ?? process.env.OPA_OPENAI_API_KEY;
+    if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
     const resp = await fetch(`${base}/chat/completions`, {
       method: "POST",
       headers,
@@ -142,11 +152,14 @@ export function providerName(): string {
   return (process.env.OPA_LLM_PROVIDER || "anthropic").toLowerCase() === "openai" ? "openai-compatible" : "anthropic";
 }
 
-export async function complete(req: ModelRequest): Promise<ModelOutput> {
+export async function complete(req: ModelRequest, auth?: CallAuth): Promise<ModelOutput> {
   if (scripted) return scripted.complete(req);
+  const provider = auth?.provider;
+  if (provider === "openai") return openaiProvider.complete(req, auth);
+  if (provider === "anthropic") return anthropicProvider.complete(req, auth);
   const p = (process.env.OPA_LLM_PROVIDER || "anthropic").toLowerCase();
-  if (p === "openai" || p === "vllm" || p === "openai-compatible") return openaiProvider.complete(req);
-  return anthropicProvider.complete(req);
+  if (p === "openai" || p === "vllm" || p === "openai-compatible") return openaiProvider.complete(req, auth);
+  return anthropicProvider.complete(req, auth);
 }
 
 // Helper for the scripted provider: build a ModelOutput the agent loop understands.

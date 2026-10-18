@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { apiRequest, queryClient, API_BASE } from "@/lib/queryClient";
-import type { AgentEvent, Approval, Fact, Message, StateSnapshot, Tier } from "@shared/schema";
+import { apiRequest, getQueryFn, queryClient, API_BASE } from "@/lib/queryClient";
+import type { AgentEvent, Approval, Fact, Message, Settings, StateSnapshot, Tier } from "@shared/schema";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -16,6 +16,8 @@ import {
 } from "lucide-react";
 
 const REPO_URL = "https://github.com/Regantih/open-personal-agent";
+
+interface SessionInfo { userId: string | null; singleUser: boolean; email: string | null; phone: string | null }
 
 const FALLBACK_SUGGESTIONS = [
   { label: "Calendar this week", prompt: "What's on my calendar this week?" },
@@ -472,6 +474,191 @@ function PolicyTab({ state }: { state: StateSnapshot }) {
           <div className="mt-1 flex items-center justify-between text-xs"><span>Orchestrator / tracing</span><Badge variant="outline" data-testid="status-infra">{s.orchestrator}{s.tracing ? " + langfuse" : ""}</Badge></div>
         </div>
       </div>
+
+      <AccountSection s={s} />
+    </div>
+  );
+}
+
+function SignIn() {
+  const { toast } = useToast();
+  const [mode, setMode] = useState<"email" | "phone">("email");
+  const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
+  const [code, setCode] = useState("");
+  const [stage, setStage] = useState<"enter" | "sent">("enter");
+  const [devLink, setDevLink] = useState<string | null>(null);
+  const [devCode, setDevCode] = useState<string | null>(null);
+  const invalidate = () => queryClient.invalidateQueries({ queryKey: ["/api/auth/session"] });
+
+  const magic = useMutation({
+    mutationFn: async () => (await apiRequest("POST", "/api/auth/magic-link", { email })).json(),
+    onSuccess: (r: any) => { setStage("sent"); setDevLink(r.devLink ?? null); },
+    onError: (e: Error) => toast({ title: "Could not send link", description: e.message.replace(/^\d+: /, ""), variant: "destructive" }),
+  });
+  const otpReq = useMutation({
+    mutationFn: async () => (await apiRequest("POST", "/api/auth/phone/request", { phone })).json(),
+    onSuccess: (r: any) => { setStage("sent"); setDevCode(r.devCode ?? null); },
+    onError: (e: Error) => toast({ title: "Could not send code", description: e.message.replace(/^\d+: /, ""), variant: "destructive" }),
+  });
+  const otpVerify = useMutation({
+    mutationFn: async () => (await apiRequest("POST", "/api/auth/phone/verify", { phone, code })).json(),
+    onSuccess: invalidate,
+    onError: (e: Error) => toast({ title: "Code rejected", description: e.message.replace(/^\d+: /, ""), variant: "destructive" }),
+  });
+
+  return (
+    <div className="flex min-h-[100dvh] items-center justify-center bg-background p-4">
+      <div className="w-full max-w-sm rounded-xl border bg-card p-6" data-testid="card-signin">
+        <h1 className="text-lg font-semibold tracking-tight">Open Personal Agent</h1>
+        <p className="mt-1 text-sm text-muted-foreground">A personal agent you can text. Sign in to link your inbox, calendar, and approvals to your account.</p>
+        <div className="mt-4 flex gap-1 rounded-lg bg-muted p-1">
+          {(["email", "phone"] as const).map((m) => (
+            <button key={m} onClick={() => { setMode(m); setStage("enter"); }} data-testid={`button-auth-${m}`}
+              className={`flex-1 rounded-md py-1.5 text-sm capitalize ${mode === m ? "bg-foreground text-background" : "text-muted-foreground"}`}>{m === "email" ? "Email link" : "Text message"}</button>
+          ))}
+        </div>
+        {mode === "email" ? (
+          <div className="mt-4 space-y-2">
+            <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" data-testid="input-auth-email" />
+            <Button className="w-full" onClick={() => magic.mutate()} disabled={!/@/.test(email) || magic.isPending} data-testid="button-send-link">
+              {magic.isPending ? "Sending…" : "Email me a sign-in link"}
+            </Button>
+            {stage === "sent" && (
+              <p className="text-xs text-muted-foreground">
+                Link sent — it expires in 15 minutes.
+                {devLink && <a href={devLink} className="mt-1 block font-medium text-primary underline [overflow-wrap:anywhere]" data-testid="link-dev-magic">Dev shortcut: click to sign in</a>}
+              </p>
+            )}
+          </div>
+        ) : (
+          <div className="mt-4 space-y-2">
+            <Input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+1 555 123 4567" data-testid="input-auth-phone" />
+            {stage === "enter" ? (
+              <Button className="w-full" onClick={() => otpReq.mutate()} disabled={phone.replace(/\D/g, "").length < 7 || otpReq.isPending} data-testid="button-send-code">
+                {otpReq.isPending ? "Sending…" : "Text me a code"}
+              </Button>
+            ) : (
+              <>
+                <Input value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))} placeholder="6-digit code" inputMode="numeric" data-testid="input-auth-code" />
+                <Button className="w-full" onClick={() => otpVerify.mutate()} disabled={code.length !== 6 || otpVerify.isPending} data-testid="button-verify-code">
+                  {otpVerify.isPending ? "Checking…" : "Sign in"}
+                </Button>
+                <p className="text-xs text-muted-foreground">Code sent — it expires in 15 minutes.{devCode && <span className="mt-1 block font-mono" data-testid="text-dev-code">Dev code: {devCode}</span>}</p>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function AccountSection({ s }: { s: Settings }) {
+  const { toast } = useToast();
+  const [bindChannel, setBindChannel] = useState<"sms" | "email">("sms");
+  const [bindAddr, setBindAddr] = useState("");
+  const [bindCode, setBindCode] = useState("");
+  const [bindStage, setBindStage] = useState<"enter" | "sent">("enter");
+  const [bindDev, setBindDev] = useState<string | null>(null);
+  const [keyProvider, setKeyProvider] = useState("anthropic");
+  const [keyValue, setKeyValue] = useState("");
+  const invalidate = () => queryClient.invalidateQueries({ queryKey: ["/api/state"] });
+
+  const bindStart = useMutation({
+    mutationFn: async () => (await apiRequest("POST", "/api/channels/bind", { channel: bindChannel, address: bindAddr })).json(),
+    onSuccess: (r: any) => { setBindStage("sent"); setBindDev(r.devCode ?? r.devLink ?? null); },
+    onError: (e: Error) => toast({ title: "Could not send", description: e.message.replace(/^\d+: /, ""), variant: "destructive" }),
+  });
+  const bindVerify = useMutation({
+    mutationFn: async () => (await apiRequest("POST", "/api/channels/bind/verify", { channel: bindChannel, address: bindAddr, code: bindCode })).json(),
+    onSuccess: () => { setBindStage("enter"); setBindAddr(""); setBindCode(""); setBindDev(null); invalidate(); toast({ title: "Channel linked" }); },
+    onError: (e: Error) => toast({ title: "Code rejected", description: e.message.replace(/^\d+: /, ""), variant: "destructive" }),
+  });
+  const saveKey = useMutation({
+    mutationFn: async () => (await apiRequest("POST", "/api/keys", { provider: keyProvider, key: keyValue })).json(),
+    onSuccess: () => { setKeyValue(""); invalidate(); toast({ title: "Key stored (encrypted at rest)" }); },
+    onError: (e: Error) => toast({ title: "Key rejected", description: e.message.replace(/^\d+: /, ""), variant: "destructive" }),
+  });
+  const delKey = useMutation({
+    mutationFn: async (p: string) => apiRequest("DELETE", `/api/keys/${p}`),
+    onSuccess: invalidate,
+  });
+  const logout = useMutation({
+    mutationFn: async () => apiRequest("POST", "/api/auth/logout"),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/auth/session"] }),
+  });
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-lg border bg-card p-3">
+        <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground"><ShieldCheck className="h-3.5 w-3.5" /> Account</div>
+        <div className="mt-2 text-xs text-muted-foreground">
+          Signed in as <span className="font-medium text-foreground">{s.userEmail ?? s.userPhone ?? "local user"}</span>
+          {!s.singleUser && <Button size="sm" variant="ghost" className="ml-2 h-6 px-2 text-xs" onClick={() => logout.mutate()} data-testid="button-signout">Sign out</Button>}
+        </div>
+        {s.agentEmail && (
+          <div className="mt-2 text-xs text-muted-foreground">
+            Email your agent at <span className="font-mono text-foreground" data-testid="text-agent-email">{s.agentEmail}</span>
+          </div>
+        )}
+        {s.usageToday && (
+          <div className="mt-2 text-xs text-muted-foreground" data-testid="text-usage">
+            Today: {s.usageToday.turns} agent turn{s.usageToday.turns === 1 ? "" : "s"}
+            {s.freeTierRemaining !== null && s.freeTierLimit !== null && ` · ${s.freeTierRemaining}/${s.freeTierLimit} free turns left`}
+            {s.freeTierRemaining === null && s.keyProviders.length > 0 && " · your own model key"}
+          </div>
+        )}
+      </div>
+
+      <div className="rounded-lg border bg-card p-3">
+        <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground"><Radio className="h-3.5 w-3.5" /> Linked channels</div>
+        <ul className="mt-2 space-y-1">
+          {s.boundChannels.map((b) => (
+            <li key={`${b.channel}:${b.address}`} className="flex items-center gap-2 text-xs" data-testid={`row-binding-${b.channel}`}>
+              <Badge variant="outline">{b.channel}</Badge><span className="font-mono">{b.address}</span>
+            </li>
+          ))}
+          {!s.boundChannels.length && <li className="text-xs text-muted-foreground">No channels linked yet — the web app only.</li>}
+        </ul>
+        <div className="mt-3 flex gap-1.5">
+          <select value={bindChannel} onChange={(e) => { setBindChannel(e.target.value as "sms" | "email"); setBindStage("enter"); }} className="rounded-md border bg-background px-2 py-1 text-xs" data-testid="select-bind-channel" aria-label="Channel type">
+            <option value="sms">SMS</option><option value="email">Email</option>
+          </select>
+          <Input value={bindAddr} onChange={(e) => setBindAddr(e.target.value)} placeholder={bindChannel === "sms" ? "+1 555 123 4567" : "you@example.com"} className="h-8 flex-1 text-xs" data-testid="input-bind-address" />
+          <Button size="sm" variant="outline" className="h-8" onClick={() => bindStart.mutate()} disabled={!bindAddr.trim() || bindStart.isPending} data-testid="button-bind-start">
+            {bindStage === "sent" ? "Resend" : "Send code"}
+          </Button>
+        </div>
+        {bindStage === "sent" && (
+          <div className="mt-2 flex gap-1.5">
+            <Input value={bindCode} onChange={(e) => setBindCode(e.target.value)} placeholder="code" className="h-8 w-28 font-mono text-xs" data-testid="input-bind-code" />
+            <Button size="sm" className="h-8" onClick={() => bindVerify.mutate()} disabled={!bindCode.trim() || bindVerify.isPending} data-testid="button-bind-verify">Verify</Button>
+            {bindDev && <span className="self-center font-mono text-[11px] text-muted-foreground [overflow-wrap:anywhere]" data-testid="text-bind-dev">{bindDev.startsWith("http") ? "link emailed (check inbox)" : `dev: ${bindDev}`}</span>}
+          </div>
+        )}
+      </div>
+
+      <div className="rounded-lg border bg-card p-3">
+        <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground"><KeyRound className="h-3.5 w-3.5" /> Model keys (BYOK)</div>
+        <p className="mt-1 text-xs text-muted-foreground">Bring your own model key — encrypted at rest, used only for your turns. Without one, free-tier limits apply.</p>
+        <ul className="mt-2 space-y-1">
+          {s.keyProviders.map((p) => (
+            <li key={p} className="flex items-center gap-2 text-xs" data-testid={`row-key-${p}`}>
+              <Badge variant="outline">{p}</Badge><span className="text-muted-foreground">stored · encrypted</span>
+              <Button size="sm" variant="ghost" className="ml-auto h-6 px-2 text-xs" onClick={() => delKey.mutate(p)} data-testid={`button-delkey-${p}`}>Remove</Button>
+            </li>
+          ))}
+          {!s.keyProviders.length && <li className="text-xs text-muted-foreground">No keys stored.</li>}
+        </ul>
+        <div className="mt-3 flex gap-1.5">
+          <select value={keyProvider} onChange={(e) => setKeyProvider(e.target.value)} className="rounded-md border bg-background px-2 py-1 text-xs" data-testid="select-key-provider" aria-label="Key provider">
+            <option value="anthropic">Anthropic</option><option value="openai">OpenAI-compatible</option>
+          </select>
+          <Input type="password" value={keyValue} onChange={(e) => setKeyValue(e.target.value)} placeholder="sk-…" className="h-8 flex-1 font-mono text-xs" data-testid="input-byok-key" />
+          <Button size="sm" variant="outline" className="h-8" onClick={() => saveKey.mutate()} disabled={keyValue.length < 8 || saveKey.isPending} data-testid="button-save-key">Save</Button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -539,7 +726,9 @@ function ControlPanel({ state }: { state: StateSnapshot }) {
 export default function AgentPage() {
   const { toast } = useToast();
   const [mobileView, setMobileView] = useState<"chat" | "control">("chat");
-  const { data: state, isLoading, error } = useQuery<StateSnapshot>({ queryKey: ["/api/state"], refetchInterval: 2500 });
+  const { data: session, isLoading: sessionLoading } = useQuery<SessionInfo | null>({ queryKey: ["/api/auth/session"], queryFn: getQueryFn({ on401: "returnNull" }) });
+  const signedIn = !!session && (session.singleUser || !!session.userId);
+  const { data: state, isLoading, error } = useQuery<StateSnapshot>({ queryKey: ["/api/state"], refetchInterval: 2500, enabled: signedIn });
 
   const background = useMutation({
     mutationFn: async () => (await apiRequest("POST", "/api/background/run")).json(),
@@ -594,9 +783,11 @@ export default function AgentPage() {
         </button>
       </div>
 
-      {isLoading && <div className="p-6 text-sm text-muted-foreground" data-testid="status-loading">Connecting to your agent…</div>}
-      {error && <div className="p-6 text-sm text-destructive" data-testid="status-error">Could not reach the agent server: {(error as Error).message}</div>}
-      {state && (
+      {sessionLoading && <div className="p-6 text-sm text-muted-foreground" data-testid="status-loading">Connecting…</div>}
+      {session !== undefined && !signedIn && <SignIn />}
+      {signedIn && isLoading && <div className="p-6 text-sm text-muted-foreground" data-testid="status-loading">Connecting to your agent…</div>}
+      {signedIn && error && <div className="p-6 text-sm text-destructive" data-testid="status-error">Could not reach the agent server: {(error as Error).message}</div>}
+      {signedIn && state && (
         <main className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_440px]">
           <div className={`min-h-0 ${mobileView === "chat" ? "flex" : "hidden"} flex-col lg:flex`}><Conversation state={state} /></div>
           <aside className={`min-h-0 border-l bg-[hsl(40_18%_95%)] ${mobileView === "control" ? "flex" : "hidden"} flex-col lg:flex`} aria-label="Control panel">

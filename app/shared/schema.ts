@@ -161,6 +161,15 @@ export interface Settings {
   emailConfigured: boolean;
   tracing: boolean;
   orchestrator: string;
+  singleUser: boolean;
+  userEmail: string | null;
+  userPhone: string | null;
+  agentEmail: string | null;
+  boundChannels: { channel: string; address: string; verifiedAt: number }[];
+  keyProviders: string[];
+  usageToday: { turns: number; inputTokens: number; outputTokens: number };
+  freeTierRemaining: number | null;
+  freeTierLimit: number | null;
 }
 
 export interface ActionSuggestion {
