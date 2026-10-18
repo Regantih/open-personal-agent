@@ -20,6 +20,7 @@ function resolvePolicyPath(): string {
   const candidates = [
     process.env.POLICY_PATH,
     path.resolve(process.cwd(), "../spec/risk-policy/policy.example.yaml"),
+    path.resolve(process.cwd(), "spec/risk-policy/policy.example.yaml"),
     path.resolve(process.cwd(), "policy.yaml"),
   ].filter(Boolean) as string[];
   const found = candidates.find((p) => existsSync(p));

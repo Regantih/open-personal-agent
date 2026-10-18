@@ -34,6 +34,8 @@ This is a reference implementation of the [playbook](../docs/). It is small on p
 | Orchestration | Pluggable: inline loop (default) or Temporal durable workflows (`OPA_ORCHESTRATOR=temporal`) |
 | Tracing | Built-in event log plus optional Langfuse mirror (`LANGFUSE_*` env vars) |
 | Multi-user | Opt-in (`OPA_MULTI_USER=1`): magic-link/OTP sign-in, per-user stores, BYOK vault, per-user agent email |
+| Storage | SQLite (default) or PostgreSQL via `DATABASE_URL` — same `Store` interface, verified against Postgres 16 |
+| Rate limits & headers | Fixed-window limiter on `/api/auth/*` and message/webhook routes; CSP/HSTS/security headers on every response (`server/security.ts`) |
 | Eval suite | 58 deterministic tasks (`npm run eval`) |
 
 ## Run it
@@ -56,6 +58,11 @@ npm run build
 NODE_ENV=production node dist/index.cjs
 ```
 
+Or with containers — `docker compose up` inside `app/` boots the app plus a
+Postgres 16 container; `app/Dockerfile` (repo-root build context) and
+`app/fly.toml` cover single-process deploys. Full instructions, including
+Neon/Fly and live Twilio/Mailgun setup, are in [DEPLOYMENT.md](../DEPLOYMENT.md).
+
 Run from the `app/` directory so it can find `../spec/risk-policy/policy.example.yaml` and `../spec/open-memory-format/schema.json`, or set `POLICY_PATH` and `OMF_SCHEMA_PATH`.
 
 ### Environment variables
@@ -70,6 +77,7 @@ Run from the `app/` directory so it can find `../spec/risk-policy/policy.example
 | `OPA_FAST_MODEL` | Batch lane model | sandbox default |
 | `OPA_TIMEZONE` | User timezone | `America/Chicago` |
 | `OPA_DB_PATH` | SQLite file | `data.db` |
+| `DATABASE_URL` | Postgres connection string — switches the whole store to `pg` | sqlite |
 | `OPA_MULTI_USER` | `1` enables multi-tenant mode (sign-in, per-user stores, BYOK) | off — single `local` user |
 | `MASTER_KEY` | Hex/base64 key encrypting stored user model keys | generated and stored in platform settings |
 | `OPA_FREE_PLANNER_TURNS` | Planner turns/day for users without a BYOK key | `25` |

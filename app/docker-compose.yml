@@ -1,0 +1,36 @@
+# Local production-shaped stack: app + Postgres. `docker compose up` then open
+# http://localhost:5000. Without the db service the app falls back to SQLite.
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: app/Dockerfile
+    ports:
+      - "5000:5000"
+    environment:
+      PORT: 5000
+      DATABASE_URL: postgres://opa:opa@db:5432/opa
+      MASTER_KEY: ${MASTER_KEY:-dev-only-insecure-master-key}
+      OPA_MULTI_USER: ${OPA_MULTI_USER:-1}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:5000}
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: opa
+      POSTGRES_PASSWORD: opa
+      POSTGRES_DB: opa
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U opa"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  pgdata:

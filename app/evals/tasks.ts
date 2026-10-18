@@ -384,7 +384,7 @@ export const tasks: EvalTask[] = [
       {
         run: async (h) => {
           const p = await pendingOf(h, "booking");
-          (h.db as any).sqlite.prepare("UPDATE approvals SET expires_at = ? WHERE id = ?").run(Date.now() - 1000, p.id);
+          await h.db.execRaw("UPDATE approvals SET expires_at = ? WHERE id = ?", [Date.now() - 1000, p.id]);
           const r = await h.decideApproval(p.id, "approve", false, "web");
           if (r.ok || !/expired/i.test(r.message)) throw new Error("expired approval was approved");
         },
@@ -720,8 +720,8 @@ export const tasks: EvalTask[] = [
     script: [
       {
         run: async (h) => {
-          const a = h.db.findOrCreateUser({ email: "alice@example.com" });
-          const b = h.db.findOrCreateUser({ email: "bob@example.com" });
+          const a = await h.db.findOrCreateUser({ email: "alice@example.com" });
+          const b = await h.db.findOrCreateUser({ email: "bob@example.com" });
           if (a.id === b.id) throw new Error("two subjects mapped to one user");
           const sa = h.db.storeFor(a.id), sb = h.db.storeFor(b.id);
           await sa.insertFact({ statement: "Alice likes tea", category: "preference", key: "x", scope: "s", sourceType: "user_stated", channel: "web", reference: null, confidence: 1, sensitivity: "low", expiresAt: null });
@@ -736,8 +736,8 @@ export const tasks: EvalTask[] = [
     script: [
       {
         run: async (h) => {
-          const a = h.db.findOrCreateUser({ email: "alice@example.com" });
-          const b = h.db.findOrCreateUser({ email: "bob@example.com" });
+          const a = await h.db.findOrCreateUser({ email: "alice@example.com" });
+          const b = await h.db.findOrCreateUser({ email: "bob@example.com" });
           await h.db.storeFor(a.id).setSetting("paused", true);
           if (await h.db.storeFor(b.id).getSetting("paused", false)) throw new Error("alice's pause leaked to bob");
           if (!(await h.db.storeFor(a.id).getSetting("paused", false))) throw new Error("alice not paused");
@@ -750,8 +750,8 @@ export const tasks: EvalTask[] = [
     script: [
       {
         run: async (h) => {
-          const a = h.db.findOrCreateUser({ email: "alice@example.com" });
-          const b = h.db.findOrCreateUser({ email: "bob@example.com" });
+          const a = await h.db.findOrCreateUser({ email: "alice@example.com" });
+          const b = await h.db.findOrCreateUser({ email: "bob@example.com" });
           const sa = h.db.storeFor(a.id), sb = h.db.storeFor(b.id);
           const approval = await sa.createApproval({ tool: "book_flight", action: "booking.create.refundable", tier: "T2", baseTier: "T2", escalated: false, summary: "s", params: {}, amountUsd: 100, merchant: "M", refundable: true, expiresAt: Date.now() + 60000 });
           const m = h.vault.signMandate(approval, 60000, await sa.mandateSecret());
@@ -766,15 +766,15 @@ export const tasks: EvalTask[] = [
     script: [
       {
         run: async (h) => {
-          const a = h.db.findOrCreateUser({ email: "alice@example.com" });
-          const b = h.db.findOrCreateUser({ email: "bob@example.com" });
-          h.db.bindChannel(a.id, "sms", "+1 (555) 010-0001");
-          h.db.bindChannel(b.id, "email", "Bob@Example.com");
-          if (h.db.findUserByChannel("sms", "+15550100001")?.id !== a.id) throw new Error("sms binding failed to normalize/resolve");
-          if (h.db.findUserByChannel("email", "bob@example.com")?.id !== b.id) throw new Error("email binding failed");
-          if (h.db.findUserByChannel("sms", "+15559999999")) throw new Error("unbound number resolved to a user");
+          const a = await h.db.findOrCreateUser({ email: "alice@example.com" });
+          const b = await h.db.findOrCreateUser({ email: "bob@example.com" });
+          await h.db.bindChannel(a.id, "sms", "+1 (555) 010-0001");
+          await h.db.bindChannel(b.id, "email", "Bob@Example.com");
+          if ((await h.db.findUserByChannel("sms", "+15550100001"))?.id !== a.id) throw new Error("sms binding failed to normalize/resolve");
+          if ((await h.db.findUserByChannel("email", "bob@example.com"))?.id !== b.id) throw new Error("email binding failed");
+          if (await h.db.findUserByChannel("sms", "+15559999999")) throw new Error("unbound number resolved to a user");
           const addr = h.db.agentAddressFor(a);
-          if (h.db.getUserByAgentToken(h.db.parseAgentToken(`To: <${addr}>`)!)?.id !== a.id) throw new Error("agent address roundtrip failed");
+          if ((await h.db.getUserByAgentToken(h.db.parseAgentToken(`To: <${addr}>`)!))?.id !== a.id) throw new Error("agent address roundtrip failed");
         },
       },
     ],
@@ -784,12 +784,12 @@ export const tasks: EvalTask[] = [
     script: [
       {
         run: async (h) => {
-          const m = h.db.createAuthToken("magic", "alice@example.com");
-          if (!h.db.consumeAuthToken("magic", "", m.raw)) throw new Error("fresh magic link rejected");
-          if (h.db.consumeAuthToken("magic", "", m.raw)) throw new Error("magic link consumed twice");
-          const otp = h.db.createAuthToken("otp", "+15550100002");
-          if (h.db.consumeAuthToken("otp", "+15550999999", otp.raw)) throw new Error("OTP replayed against a different subject");
-          if (!h.db.consumeAuthToken("otp", "+15550100002", otp.raw)) throw new Error("valid OTP rejected");
+          const m = await h.db.createAuthToken("magic", "alice@example.com");
+          if (!(await h.db.consumeAuthToken("magic", "", m.raw))) throw new Error("fresh magic link rejected");
+          if (await h.db.consumeAuthToken("magic", "", m.raw)) throw new Error("magic link consumed twice");
+          const otp = await h.db.createAuthToken("otp", "+15550100002");
+          if (await h.db.consumeAuthToken("otp", "+15550999999", otp.raw)) throw new Error("OTP replayed against a different subject");
+          if (!(await h.db.consumeAuthToken("otp", "+15550100002", otp.raw))) throw new Error("valid OTP rejected");
         },
       },
     ],
@@ -799,14 +799,14 @@ export const tasks: EvalTask[] = [
     script: [
       {
         run: async (h) => {
-          const a = h.db.findOrCreateUser({ email: "alice@example.com" });
-          const b = h.db.findOrCreateUser({ email: "bob@example.com" });
-          h.keys.saveUserKey(a.id, "anthropic", "sk-ant-alice-test");
-          if (h.keys.readUserKey(a.id, "anthropic") !== "sk-ant-alice-test") throw new Error("key roundtrip failed");
-          if (h.keys.readUserKey(b.id, "anthropic")) throw new Error("bob read alice's key");
-          if (!h.keys.resolveLlmAuth(a.id)?.apiKey?.includes("alice")) throw new Error("resolveLlmAuth missed the user key");
-          if (h.keys.resolveLlmAuth(b.id)) throw new Error("resolveLlmAuth returned a key for keyless user");
-          if (JSON.stringify(h.db.getUserKeyEnc(a.id, "anthropic")).includes("alice-test")) throw new Error("plaintext key stored");
+          const a = await h.db.findOrCreateUser({ email: "alice@example.com" });
+          const b = await h.db.findOrCreateUser({ email: "bob@example.com" });
+          await h.keys.saveUserKey(a.id, "anthropic", "sk-ant-alice-test");
+          if ((await h.keys.readUserKey(a.id, "anthropic")) !== "sk-ant-alice-test") throw new Error("key roundtrip failed");
+          if (await h.keys.readUserKey(b.id, "anthropic")) throw new Error("bob read alice's key");
+          if (!(await h.keys.resolveLlmAuth(a.id))?.apiKey?.includes("alice")) throw new Error("resolveLlmAuth missed the user key");
+          if (await h.keys.resolveLlmAuth(b.id)) throw new Error("resolveLlmAuth returned a key for keyless user");
+          if (JSON.stringify(await h.db.getUserKeyEnc(a.id, "anthropic")).includes("alice-test")) throw new Error("plaintext key stored");
         },
       },
     ],
@@ -816,8 +816,8 @@ export const tasks: EvalTask[] = [
     script: [
       {
         run: async (h) => {
-          const a = h.db.findOrCreateUser({ email: "carol@example.com" });
-          const b = h.db.findOrCreateUser({ email: "bob@example.com" });
+          const a = await h.db.findOrCreateUser({ email: "carol@example.com" });
+          const b = await h.db.findOrCreateUser({ email: "bob@example.com" });
           await h.db.storeFor(a.id).recordUsage("realtime", "model", 100, 50);
           await h.db.storeFor(a.id).recordUsage("realtime", "model", 40, 10);
           const u = await h.db.storeFor(a.id).usageToday("realtime");
@@ -834,12 +834,12 @@ export const tasks: EvalTask[] = [
     script: [
       {
         run: async (h) => {
-          const a = h.db.findOrCreateUser({ email: "alice@example.com" });
-          const raw = h.db.createSession(a.id);
-          if (h.db.sessionUser(raw) !== a.id) throw new Error("session did not resolve to its user");
-          if (h.db.sessionUser("forged-token")) throw new Error("forged session token resolved");
-          h.db.deleteSession(raw);
-          if (h.db.sessionUser(raw)) throw new Error("deleted session still resolves");
+          const a = await h.db.findOrCreateUser({ email: "alice@example.com" });
+          const raw = await h.db.createSession(a.id);
+          if ((await h.db.sessionUser(raw)) !== a.id) throw new Error("session did not resolve to its user");
+          if (await h.db.sessionUser("forged-token")) throw new Error("forged session token resolved");
+          await h.db.deleteSession(raw);
+          if (await h.db.sessionUser(raw)) throw new Error("deleted session still resolves");
         },
       },
     ],

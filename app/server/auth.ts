@@ -1,7 +1,7 @@
 import type { NextFunction, Request, Response } from "express";
 import {
   multiUser, ensureLocalUser, LOCAL_USER, createSession, sessionUser, deleteSession,
-  createAuthToken, consumeAuthToken, findOrCreateUser, bindChannel, findUserByChannel, getUser,
+  createAuthToken, consumeAuthToken, findOrCreateUser, bindChannel, getUser,
 } from "./agent/db";
 import { emailSender } from "./agent/email";
 import { smsSender } from "./agent/sms";
@@ -22,15 +22,15 @@ export function cookieToken(req: Request): string | null {
   return null;
 }
 
-export function requestUserId(req: Request): string {
-  if (!multiUser()) { ensureLocalUser(); return LOCAL_USER; }
+export async function requestUserId(req: Request): Promise<string> {
+  if (!multiUser()) { await ensureLocalUser(); return LOCAL_USER; }
   const token = cookieToken(req);
-  return token ? sessionUser(token) ?? "" : "";
+  return token ? (await sessionUser(token)) ?? "" : "";
 }
 
 // Gate for /api routes that need a signed-in user.
-export function requireUser(req: Request, res: Response, next: NextFunction) {
-  const uid = requestUserId(req);
+export async function requireUser(req: Request, res: Response, next: NextFunction) {
+  const uid = await requestUserId(req);
   if (!uid) return res.status(401).json({ message: "Sign in required" });
   (req as any).userId = uid;
   next();
@@ -47,15 +47,15 @@ function publicBase(req: Request): string {
 
 // ---------- route handlers (registered in routes.ts) ----------
 
-// POST /api/auth/session is GET: returns the signed-in identity.
-export function getSession(req: Request, res: Response) {
+// GET /api/auth/session: returns the signed-in identity.
+export async function getSession(req: Request, res: Response) {
   if (!multiUser()) {
-    const u = ensureLocalUser();
+    const u = await ensureLocalUser();
     return res.json({ userId: u.id, singleUser: true, email: u.email, phone: u.phone });
   }
-  const uid = requestUserId(req);
+  const uid = await requestUserId(req);
   if (!uid) return res.json({ userId: null, singleUser: false });
-  const u = getUser(uid);
+  const u = await getUser(uid);
   res.json({ userId: uid, singleUser: false, email: u?.email ?? null, phone: u?.phone ?? null });
 }
 
@@ -63,7 +63,7 @@ export function getSession(req: Request, res: Response) {
 export async function postMagicLink(req: Request, res: Response) {
   const email = String(req.body?.email || "").trim().toLowerCase();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ message: "Valid email required" });
-  const { raw } = createAuthToken("magic", email);
+  const { raw } = await createAuthToken("magic", email);
   const link = `${publicBase(req)}/api/auth/verify?token=${raw}`;
   const sent = await emailSender().send(email, "Your Open Personal Agent sign-in link", `Sign in: ${link}\n\nThis link works once and expires in 15 minutes.`);
   // With the simulated sender there is no real email — surface the link so the
@@ -73,14 +73,14 @@ export async function postMagicLink(req: Request, res: Response) {
 }
 
 // GET /api/auth/verify?token=... — consumes a magic link, creates the session.
-export function getVerify(req: Request, res: Response) {
+export async function getVerify(req: Request, res: Response) {
   const token = String(req.query.token || "");
-  const hit = token ? consumeAuthToken("magic", "", token) : null;
+  const hit = token ? await consumeAuthToken("magic", "", token) : null;
   if (!hit) return res.status(400).send("That link is invalid or expired. Request a new one.");
   const email = hit.subject;
-  const user = findOrCreateUser({ email });
-  bindChannel(user.id, "email", email);
-  setSessionCookie(res, createSession(user.id));
+  const user = await findOrCreateUser({ email });
+  await bindChannel(user.id, "email", email);
+  setSessionCookie(res, await createSession(user.id));
   res.redirect("/");
 }
 
@@ -89,28 +89,28 @@ export async function postPhoneRequest(req: Request, res: Response) {
   const phone = String(req.body?.phone || "").trim();
   if (!/^\+?\d[\d\s-]{6,}$/.test(phone)) return res.status(400).json({ message: "Valid phone required (E.164 preferred)" });
   const norm = phone.replace(/[^\d+]/g, "");
-  const { raw } = createAuthToken("otp", norm);
+  const { raw } = await createAuthToken("otp", norm);
   const sent = await smsSender().send(norm, `Your Open Personal Agent code is ${raw}. It expires in 15 minutes.`);
   const simulated = smsSender().name === "simulated-sms";
   res.json({ sent: sent.delivery, ...(simulated ? { devCode: raw } : {}) });
 }
 
 // POST /api/auth/phone/verify { phone, code } — sign in by phone.
-export function postPhoneVerify(req: Request, res: Response) {
+export async function postPhoneVerify(req: Request, res: Response) {
   const phone = String(req.body?.phone || "").replace(/[^\d+]/g, "");
   const code = String(req.body?.code || "").trim();
-  const hit = phone && code ? consumeAuthToken("otp", phone, code) : null;
+  const hit = phone && code ? await consumeAuthToken("otp", phone, code) : null;
   if (!hit) return res.status(401).json({ message: "Invalid or expired code" });
-  const user = findOrCreateUser({ phone });
-  bindChannel(user.id, "sms", phone);
-  setSessionCookie(res, createSession(user.id));
+  const user = await findOrCreateUser({ phone });
+  await bindChannel(user.id, "sms", phone);
+  setSessionCookie(res, await createSession(user.id));
   res.json({ ok: true, userId: user.id });
 }
 
 // POST /api/auth/logout
-export function postLogout(req: Request, res: Response) {
+export async function postLogout(req: Request, res: Response) {
   const token = cookieToken(req);
-  if (token) deleteSession(token);
+  if (token) await deleteSession(token);
   res.setHeader("Set-Cookie", `${SESSION_COOKIE}=; Path=/; HttpOnly; Max-Age=0`);
   res.json({ ok: true });
 }
@@ -126,41 +126,39 @@ export async function postBindStart(req: Request, res: Response) {
   if (!address) return res.status(400).json({ message: "address required" });
   if (channel === "sms") {
     const norm = address.replace(/[^\d+]/g, "");
-    const { raw } = createAuthToken("bind_sms", norm, uid);
+    const { raw } = await createAuthToken("bind_sms", norm, uid);
     const sent = await smsSender().send(norm, `Code ${raw} links this number to your Open Personal Agent account.`);
     return res.json({ sent: sent.delivery, ...(smsSender().name === "simulated-sms" ? { devCode: raw } : {}) });
   }
   const email = address.toLowerCase();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ message: "Valid email required" });
-  const { raw } = createAuthToken("bind_email", email, uid);
+  const { raw } = await createAuthToken("bind_email", email, uid);
   const link = `${publicBase(req)}/api/channels/bind/verify?token=${raw}&email=${encodeURIComponent(email)}`;
   const sent = await emailSender().send(email, "Link this email to your Open Personal Agent", `Confirm: ${link}\n\nExpires in 15 minutes.`);
   return res.json({ sent: sent.delivery, ...(emailSender().name === "simulated-outbox" ? { devLink: link } : {}) });
 }
 
-export function postBindVerify(req: Request, res: Response) {
+export async function postBindVerify(req: Request, res: Response) {
   const uid = (req as any).userId as string;
   const channel = req.body?.channel === "email" ? "email" : "sms";
   const address = String(req.body?.address || "").trim().toLowerCase();
   const code = String(req.body?.code || req.query.token || "").trim();
   const kind = channel === "sms" ? "bind_sms" : "bind_email";
   const subject = channel === "sms" ? address.replace(/[^\d+]/g, "") : address;
-  const hit = code ? consumeAuthToken(kind, channel === "sms" ? subject : "", code) : null;
+  const hit = code ? await consumeAuthToken(kind, channel === "sms" ? subject : "", code) : null;
   if (!hit || hit.payload !== uid) return res.status(401).json({ message: "Invalid or expired code/link" });
-  bindChannel(uid, channel, hit.subject);
+  await bindChannel(uid, channel, hit.subject);
   res.json({ ok: true, channel, address: hit.subject });
 }
 
 // GET variant so emailed bind links work from a mail client.
-export function getBindVerify(req: Request, res: Response) {
-  const uid = requestUserId(req);
+export async function getBindVerify(req: Request, res: Response) {
+  const uid = await requestUserId(req);
   if (!uid) { res.status(401).send("Sign in first, then click the link again."); return; }
   const email = String(req.query.email || "").toLowerCase();
   const token = String(req.query.token || "");
-  const hit = token ? consumeAuthToken("bind_email", "", token) : null;
+  const hit = token ? await consumeAuthToken("bind_email", "", token) : null;
   if (!hit || hit.payload !== uid || hit.subject !== email) { res.status(400).send("That link is invalid or expired."); return; }
-  bindChannel(uid, "email", hit.subject);
+  await bindChannel(uid, "email", hit.subject);
   res.redirect("/");
 }
-
-export { findUserByChannel };

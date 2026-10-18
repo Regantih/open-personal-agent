@@ -10,7 +10,7 @@ import { timezone } from "./agent";
 // Open Memory Format v0.1 export and import, validated against the shared spec schema.
 
 function schemaPath() {
-  const c = [process.env.OMF_SCHEMA_PATH, path.resolve(process.cwd(), "../spec/open-memory-format/schema.json"), path.resolve(process.cwd(), "omf-schema.json")].filter(Boolean) as string[];
+  const c = [process.env.OMF_SCHEMA_PATH, path.resolve(process.cwd(), "../spec/open-memory-format/schema.json"), path.resolve(process.cwd(), "spec/open-memory-format/schema.json"), path.resolve(process.cwd(), "omf-schema.json")].filter(Boolean) as string[];
   const f = c.find((p) => existsSync(p));
   if (!f) throw new Error("OMF schema not found. Set OMF_SCHEMA_PATH.");
   return f;

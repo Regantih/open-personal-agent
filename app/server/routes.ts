@@ -2,7 +2,7 @@ import type { Express, Request } from "express";
 import type { Server } from "node:http";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import {
-  storeFor, DEFAULT_SUGGESTIONS, multiUser, ensureLocalUser, LOCAL_USER,
+  storeFor, DEFAULT_SUGGESTIONS, multiUser, ensureLocalUser, LOCAL_USER, initDb,
   listUserIds, getUserByAgentToken, parseAgentToken, agentAddressFor, findUserByChannel,
   listBindings, listUserKeyProviders, getUser,
 } from "./agent/db";
@@ -16,11 +16,12 @@ import { policy, policyPath, limits } from "./agent/policy";
 import { exportOMF, importOMF } from "./agent/omf";
 import { requireUser } from "./auth";
 import * as auth from "./auth";
+import { securityHeaders, rateLimit } from "./security";
 import { sendMessageSchema, decideApprovalSchema, settingsUpdateSchema, type StateSnapshot } from "@shared/schema";
 
 async function snapshot(ctx: Ctx): Promise<StateSnapshot> {
   const store = ctx.store;
-  const u = getUser(ctx.userId);
+  const u = await getUser(ctx.userId);
   const usage = await store.usageToday("realtime");
   const freeLeft = await freeTierRemaining(ctx.userId);
   return {
@@ -50,8 +51,8 @@ async function snapshot(ctx: Ctx): Promise<StateSnapshot> {
       userEmail: u?.email ?? null,
       userPhone: u?.phone ?? null,
       agentEmail: u ? agentAddressFor(u) : null,
-      boundChannels: listBindings(ctx.userId),
-      keyProviders: listUserKeyProviders(ctx.userId),
+      boundChannels: await listBindings(ctx.userId),
+      keyProviders: await listUserKeyProviders(ctx.userId),
       usageToday: { turns: usage.turns, inputTokens: usage.inputTokens, outputTokens: usage.outputTokens },
       freeTierRemaining: freeLeft,
       freeTierLimit: freeLeft === null ? null : FREE_PLANNER_TURNS_PER_DAY,
@@ -75,9 +76,15 @@ export function validTwilioSignature(req: Request): boolean {
 const xmlEscape = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
+  await initDb();
+  app.use(securityHeaders);
+  const authLimiter = rateLimit({ windowMs: 10 * 60_000, max: 20, name: "auth" });
+  const msgLimiter = rateLimit({ windowMs: 60_000, max: 30, name: "msg" });
+  app.use("/api/auth", authLimiter);
+  app.use(["/api/messages", "/api/channels/sms", "/api/channels/email"], msgLimiter);
   const orch = await orchestrator();
   if (!multiUser()) {
-    ensureLocalUser();
+    await ensureLocalUser();
     await storeFor(LOCAL_USER).seed();
   }
   console.log(`[opa] policy loaded from ${policyPath}; planner=${models.planner} fast=${models.fast} provider=${providerName()} orchestrator=${orch.name} mode=${multiUser() ? "multi-user" : "single-user"}`);
@@ -87,13 +94,15 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   const proactiveMins = Number(process.env.OPA_PROACTIVE_INTERVAL_MINUTES || 0);
   if (proactiveMins > 0) {
     setInterval(() => {
-      for (const uid of listUserIds()) {
-        const store = storeFor(uid);
-        store.getSetting<boolean>("paused", false).then((paused) => {
-          if (paused) return;
-          orch.runBackground(uid).catch((e: any) => store.logEvent("error", `Scheduled background check failed: ${e.message}`, null));
-        });
-      }
+      void (async () => {
+        for (const uid of await listUserIds()) {
+          const store = storeFor(uid);
+          store.getSetting<boolean>("paused", false).then((paused) => {
+            if (paused) return;
+            orch.runBackground(uid).catch((e: any) => store.logEvent("error", `Scheduled background check failed: ${e.message}`, null));
+          });
+        }
+      })();
     }, proactiveMins * 60_000).unref();
     console.log(`[opa] proactive lane every ${proactiveMins}m`);
   }
@@ -121,7 +130,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const from = String(req.body.From || "").replace(/[^\d+]/g, "");
     let userId = "";
     if (multiUser()) {
-      userId = findUserByChannel("sms", from)?.id ?? "";
+      userId = (await findUserByChannel("sms", from))?.id ?? "";
       if (!userId) {
         return res.type("text/xml").send(`<?xml version="1.0" encoding="UTF-8"?><Response><Message>This number isn't linked to an account. Add it under Settings &gt; Channels in the app first.</Message></Response>`);
       }
@@ -147,10 +156,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     let isCommand = false;
     if (multiUser()) {
       const token = parseAgentToken(mail.to);
-      const target = token ? getUserByAgentToken(token) : undefined;
+      const target = token ? await getUserByAgentToken(token) : undefined;
       if (!target) return res.status(200).json({ delivered: "dropped", reason: "no user for agent address" });
       userId = target.id;
-      isCommand = findUserByChannel("email", bareAddress(mail.from))?.id === userId;
+      isCommand = (await findUserByChannel("email", bareAddress(mail.from)))?.id === userId;
     } else {
       userId = LOCAL_USER;
       isCommand = isAgentAddressed(mail);
@@ -226,26 +235,26 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   });
 
   // ---------- BYOK keys ----------
-  app.get("/api/keys", (req, res) => res.json({ providers: listUserKeyProviders((req as any).userId) }));
+  app.get("/api/keys", async (req, res) => res.json({ providers: await listUserKeyProviders((req as any).userId) }));
   app.post("/api/keys", async (req, res) => {
     const provider = String(req.body?.provider || "").toLowerCase();
     const key = String(req.body?.key || "").trim();
     if (!["anthropic", "openai"].includes(provider)) return res.status(400).json({ message: "provider must be anthropic or openai" });
     if (key.length < 8) return res.status(400).json({ message: "key required" });
-    saveUserKey((req as any).userId, provider, key);
+    await saveUserKey((req as any).userId, provider, key);
     await ctx(req).store.logEvent("policy", `Stored ${provider} model key (encrypted at rest)`, null);
     res.json({ ok: true, provider });
   });
   app.delete("/api/keys/:provider", async (req, res) => {
-    const ok = deleteUserKey((req as any).userId, String(req.params.provider));
+    const ok = await deleteUserKey((req as any).userId, String(req.params.provider));
     res.json({ ok });
   });
 
   // ---------- channel bindings ----------
-  app.get("/api/channels", (req, res) => {
+  app.get("/api/channels", async (req, res) => {
     const uid = (req as any).userId as string;
-    const u = getUser(uid);
-    res.json({ bindings: listBindings(uid), agentEmail: u ? agentAddressFor(u) : null });
+    const u = await getUser(uid);
+    res.json({ bindings: await listBindings(uid), agentEmail: u ? agentAddressFor(u) : null });
   });
   app.post("/api/channels/bind", requireUser, auth.postBindStart);
   app.post("/api/channels/bind/verify", auth.postBindVerify);
@@ -279,8 +288,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   const interval = Number(process.env.OPA_BACKGROUND_INTERVAL_MIN || 0);
   if (interval > 0) setInterval(() => {
-    for (const uid of listUserIds()) orch.runBackground(uid).catch((e) => storeFor(uid).logEvent("error", `Background lane failed: ${e.message}`, null));
-  }, interval * 60000);
+    void (async () => {
+      for (const uid of await listUserIds()) orch.runBackground(uid).catch((e) => storeFor(uid).logEvent("error", `Background lane failed: ${e.message}`, null));
+    })();
+  }, interval * 60000).unref();
 
   return httpServer;
 }

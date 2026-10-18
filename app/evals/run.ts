@@ -33,8 +33,9 @@ async function main() {
   const EVAL_USER = "eval";
   const ctx = agent.ctxFor(EVAL_USER);
   const store = ctx.store;
-  db.ensureLocalUser();
-  db.findOrCreateUser({ email: "eval@example.com" }); // ensure a real user row exists for EVAL_USER-independent helpers
+  await db.initDb();
+  await db.ensureLocalUser();
+  await db.findOrCreateUser({ email: "eval@example.com" }); // ensure a real user row exists for EVAL_USER-independent helpers
 
   setScriptedModel(async () => {
     const step = queue.shift();

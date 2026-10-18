@@ -129,7 +129,7 @@ export async function runAgent(ctx: Ctx, userText: string, channel: string, refe
 
   // BYOK: a stored key rides on every call. Without one, the free tier caps
   // planner turns/day; the batch lane is unaffected (always platform model).
-  const auth: CallAuth | undefined = resolveLlmAuth(ctx.userId) ?? undefined;
+  const auth: CallAuth | undefined = (await resolveLlmAuth(ctx.userId)) ?? undefined;
   const remaining = await freeTierRemaining(ctx.userId);
   if (remaining !== null && remaining <= 0) {
     return {
