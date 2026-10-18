@@ -1,6 +1,9 @@
 # Risk Policy v0.1 example. Conservative defaults.
 version: "0.1"
 
+# Any action not matched below is treated as this tier (fail closed).
+default_tier: T3
+
 tiers:
   T0:
     name: read
@@ -26,6 +29,12 @@ actions:
     tier: T0
   - match: "search.*"
     tier: T0
+  - match: "memory.read"
+    tier: T0
+  - match: "finance.read"
+    tier: T0
+  - match: "memory.write"
+    tier: T1
   - match: "calendar.create_hold"
     tier: T1
   - match: "email.draft"

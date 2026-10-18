@@ -11,15 +11,20 @@
 - [x] Open Memory Format v0.1 draft with schema, example, and validator
 - [x] Risk Policy v0.1 draft
 
-## v0.2: Minimal Reference Implementation
+## v0.2: Minimal Reference Implementation ([app/](app/))
 
-- [ ] SMS and email gateway on an owned domain
-- [ ] Temporal-based orchestrator with the risk-policy engine
-- [ ] Model router with at least one hosted and one self-hosted (vLLM) model
-- [ ] Calendar MCP tool and flight-search tool
-- [ ] T3 confirmation flow with mandate records
-- [ ] Memory stored and exported in OMF
-- [ ] Langfuse tracing and a 50-task eval suite
+- [x] Web chat channel and SMS webhook with Twilio signature check (SMS not yet live-tested)
+- [ ] Email channel on an owned domain
+- [x] Orchestrator loop with the risk-policy engine (simple in-process loop; Temporal not yet)
+- [x] Model router with a real-time planner lane and a fast batch lane
+- [ ] Self-hosted (vLLM) model option in the router
+- [x] Calendar tool and flight-search tool (sample data behind provider interfaces; real calendar via MCP still to do)
+- [x] T3 confirmation flow with signed mandate records and single-use cards (simulated issuer)
+- [x] Prompt-injection taint escalation and kill switch
+- [x] Memory stored and exported in OMF, with validated import
+- [x] Action log of every model call, policy decision, approval, and execution
+- [ ] Langfuse tracing
+- [ ] 50-task eval suite
 
 ## v0.3: Voice and Payments
 

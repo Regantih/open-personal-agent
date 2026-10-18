@@ -35,7 +35,7 @@ This repository shares that knowledge openly: the architecture, an open-source-f
 
 ## Status
 
-This is an early, documentation-first project. The goal for the next phase is a minimal reference implementation (SMS plus email, calendar, flight search, risk-tiered confirmations, and memory export) built entirely on the open stack. See the [Roadmap](ROADMAP.md).
+v0.2 ships a working [reference app](app/): a personal agent you text that plans with a frontier model, enforces the Risk Policy on every action, asks for signed approval before spending money or acting as you, defends against prompt injection from email, and exports memory as OMF. It runs on sample calendar, inbox, and flight data, and its bookings, cards, and email sends are simulated. The SMS webhook is built but not yet live-tested. See [app/README.md](app/README.md) for what is real and what is sample, and the [Roadmap](ROADMAP.md) for what comes next.
 
 ## Contributing
 
