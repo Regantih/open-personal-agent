@@ -10,10 +10,11 @@ export function securityHeaders(_req: Request, res: Response, next: NextFunction
   res.setHeader("X-Frame-Options", "DENY");
   res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
   res.setHeader("Permissions-Policy", "camera=(), geolocation=(), microphone=(self)");
-  // SPA CSP: self-hosted assets, inline styles for React style props, API on same origin.
+  // SPA CSP: self-hosted assets, inline styles for React style props, API on
+  // same origin. The two public font CDNs the client links are allowlisted.
   res.setHeader(
     "Content-Security-Policy",
-    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
+    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://api.fontshare.com https://fonts.googleapis.com; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; font-src 'self' data: https://cdn.fontshare.com https://fonts.gstatic.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
   );
   res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
   next();

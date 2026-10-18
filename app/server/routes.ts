@@ -328,8 +328,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // ---------- browser rung (live view + takeover) ----------
   app.get("/api/browser/status", (req, res) => res.json(browserStatus((req as any).userId)));
   app.get("/api/browser/frame", async (req, res) => {
-    const f = latestFrame((req as any).userId) ?? (await screenshot((req as any).userId));
-    if (!f) return res.status(404).json({ message: "no browser session" });
+    const st = browserStatus((req as any).userId);
+    if (!st.open) return res.status(404).json({ message: "no browser session" });
+    const f = latestFrame((req as any).userId)
+      // No screencast (remote CDP without it) -> fall back to a CDP screenshot.
+      // With a screencast, a pending first frame is a 204 — never a screenshot,
+      // which would queue CDP work and starve the page's other requests.
+      ?? (st.screencast ? null : await screenshot((req as any).userId));
+    if (!f) return res.status(204).end();
     res.setHeader("Content-Type", "image/jpeg");
     res.setHeader("Cache-Control", "no-store");
     res.send(f);

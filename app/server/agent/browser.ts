@@ -82,7 +82,7 @@ const SESSION_LOCK = new Map<string, Promise<Session>>();
 
 export function browserStatus(userId: string) {
   const s = sessions.get(userId);
-  return s ? { open: true, url: s.page.url(), title: "" , frameBytes: s.lastFrame?.length ?? 0 } : { open: false, url: "", title: "", frameBytes: 0 };
+  return s ? { open: true, url: s.page.url(), title: "", frameBytes: s.lastFrame?.length ?? 0, screencast: !!s.cdp } : { open: false, url: "", title: "", frameBytes: 0, screencast: false };
 }
 
 export function latestFrame(userId: string): Buffer | null {
@@ -229,10 +229,18 @@ export async function act(userId: string, input: { op: string; ref?: number; sel
   return snapshot(s);
 }
 
+const shotInFlight = new Map<string, Promise<Buffer | null>>();
 export async function screenshot(userId: string): Promise<Buffer | null> {
   const s = sessions.get(userId);
   if (!s) return null;
-  return s.page.screenshot({ type: "jpeg", quality: 70 });
+  // Serialized: concurrent polls must not queue multiple CDP screenshots —
+  // they exhaust the browser's per-origin connection pool and starve the
+  // app's own requests (observed as fetch storms while a session opens).
+  const pending = shotInFlight.get(userId);
+  if (pending) return pending;
+  const p = s.page.screenshot({ type: "jpeg", quality: 70 }).finally(() => shotInFlight.delete(userId));
+  shotInFlight.set(userId, p);
+  return p;
 }
 
 // Human takeover: forward input into the session page.

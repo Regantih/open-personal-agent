@@ -14,3 +14,4 @@ data.db-journal
 
 *.log
 .DS_Store
+demo*.db*

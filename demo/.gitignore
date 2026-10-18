@@ -11,3 +11,5 @@ concat.txt
 test-voice.mp3
 *.elevenlabs-key.txt
 .elevenlabs-key*
+dbg*.png
+serve*.log

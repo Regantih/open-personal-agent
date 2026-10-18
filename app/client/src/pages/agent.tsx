@@ -478,10 +478,14 @@ function BrowserTab() {
       try {
         const r = await fetch(`${API_BASE}/api/browser/frame`, { credentials: "include" });
         if (!alive) return;
-        if (!r.ok) return;
-        const blob = await r.blob();
+        if (!r.ok || r.status === 204) return; // 204 = session open, frame pending
+        // arrayBuffer, not blob(): response.blob() intermittently fails with
+        // "Failed to fetch" in Chromium while the body streams correctly —
+        // building the Blob ourselves sidesteps that path entirely.
+        const buf = await r.arrayBuffer();
+        if (!buf.byteLength) return;
         if (objectUrl) URL.revokeObjectURL(objectUrl);
-        objectUrl = URL.createObjectURL(blob);
+        objectUrl = URL.createObjectURL(new Blob([buf], { type: "image/jpeg" }));
         setFrameUrl(objectUrl);
       } catch { /* session may have closed */ }
     };
