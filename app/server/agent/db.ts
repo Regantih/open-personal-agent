@@ -110,6 +110,11 @@ export function listInbox(): InboxEmail[] {
   }));
 }
 export function markRead(id: number) { sqlite.prepare("UPDATE inbox SET read = 1 WHERE id = ?").run(id); }
+export function addInboundEmail(sender: string, subject: string, body: string): InboxEmail {
+  const receivedAt = Date.now();
+  const r = sqlite.prepare("INSERT INTO inbox (sender, subject, body, received_at, read) VALUES (?, ?, ?, ?, 0)").run(sender, subject, body, receivedAt);
+  return { id: Number(r.lastInsertRowid), sender, subject, body, receivedAt, read: false };
+}
 export function addOutbox(recipient: string, subject: string, body: string, status: Outbox["status"]): Outbox {
   const createdAt = Date.now();
   const r = sqlite.prepare("INSERT INTO outbox (recipient, subject, body, status, created_at) VALUES (?, ?, ?, ?, ?)").run(recipient, subject, body, status, createdAt);

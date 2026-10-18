@@ -7,7 +7,7 @@ export type Tier = "T0" | "T1" | "T2" | "T3";
 export interface Message {
   id: number;
   role: "user" | "agent";
-  channel: "web" | "sms" | "proactive" | "system";
+  channel: "web" | "sms" | "email" | "proactive" | "system";
   text: string;
   createdAt: number;
 }
@@ -87,7 +87,7 @@ export interface Approval {
 }
 
 export interface Mandate {
-  version: "opa-mandate-0.1";
+  version: "opa-mandate-0.1" | "opa-mandate-0.2";
   approval_id: number;
   action: string;
   amount_usd: number | null;
@@ -96,6 +96,26 @@ export interface Mandate {
   issued_at: number;
   expires_at: number;
   signature: string;
+  // AP2-shaped objects present on v0.2 mandates.
+  ap2?: {
+    intent_mandate: {
+      natural_language_description: string;
+      user_cart_confirmation_required: boolean;
+      merchants: string[] | null;
+      requires_refundability: boolean;
+      intent_expiry: string;
+    };
+    payment_mandate: {
+      payment_details_total: {
+        label: string;
+        amount: { currency: string; value: number };
+        refund_period: string;
+      };
+      payment_method: string;
+      merchant_agent: string | null;
+      risk_data: Record<string, unknown>;
+    } | null;
+  };
 }
 
 export interface Booking {
@@ -136,7 +156,11 @@ export interface Settings {
   plannerModel: string;
   fastModel: string;
   llmConfigured: boolean;
+  llmProvider: string;
   smsConfigured: boolean;
+  emailConfigured: boolean;
+  tracing: boolean;
+  orchestrator: string;
 }
 
 export interface StateSnapshot {

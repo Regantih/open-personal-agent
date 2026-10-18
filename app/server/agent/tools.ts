@@ -3,6 +3,7 @@ import * as db from "./db";
 import { sampleProvider, getOffer } from "./flights";
 import { issueSingleUseCard } from "./vault";
 import { limits } from "./policy";
+import { emailSender } from "./email";
 
 // Each tool declares the policy action it performs. The runner (agent.ts) evaluates that action against the Risk Policy
 // before execute() is ever called. The model never executes anything directly.
@@ -85,8 +86,9 @@ export const tools: ToolDef[] = [
     async execute(i) {
       const d = db.getOutbox(i.draft_id);
       if (!d) throw new Error("Draft not found");
+      const sent = await emailSender().send(d.recipient, d.subject, d.body);
       db.setOutboxStatus(d.id, "sent");
-      return { sent: true, id: d.id, to: d.recipient, delivery: "simulated outbox (connect SMTP or an agent inbox provider for real delivery)" };
+      return { sent: true, id: d.id, to: d.recipient, delivery: sent.delivery };
     },
   },
   {

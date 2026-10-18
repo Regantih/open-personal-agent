@@ -460,12 +460,15 @@ function PolicyTab({ state }: { state: StateSnapshot }) {
           <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground"><Cpu className="h-3.5 w-3.5" /> Model router</div>
           <div className="mt-2 text-xs"><span className="text-muted-foreground">Real-time lane</span><div className="font-mono" data-testid="text-planner-model">{s.plannerModel}</div></div>
           <div className="mt-1 text-xs"><span className="text-muted-foreground">Batch lane</span><div className="font-mono" data-testid="text-fast-model">{s.fastModel}</div></div>
+          <div className="mt-1 flex items-center justify-between text-xs"><span>Provider</span><Badge variant="outline" data-testid="status-provider">{s.llmProvider}</Badge></div>
         </div>
         <div className="rounded-lg border bg-card p-3">
           <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground"><Radio className="h-3.5 w-3.5" /> Channels</div>
           <div className="mt-2 flex items-center justify-between text-xs"><span>Web chat</span><Badge>Active</Badge></div>
           <div className="mt-1 flex items-center justify-between text-xs"><span>SMS (Twilio webhook)</span><Badge variant="outline" data-testid="status-sms">{s.smsConfigured ? "Configured" : "Needs number"}</Badge></div>
-          <div className="mt-1 flex items-center justify-between text-xs"><span>Email, voice</span><Badge variant="outline">Roadmap</Badge></div>
+          <div className="mt-1 flex items-center justify-between text-xs"><span>Email (inbound + outbound)</span><Badge variant="outline" data-testid="status-email">{s.emailConfigured ? "Configured" : "Simulated"}</Badge></div>
+          <div className="mt-1 flex items-center justify-between text-xs"><span>Voice</span><Badge variant="outline">Roadmap</Badge></div>
+          <div className="mt-1 flex items-center justify-between text-xs"><span>Orchestrator / tracing</span><Badge variant="outline" data-testid="status-infra">{s.orchestrator}{s.tracing ? " + langfuse" : ""}</Badge></div>
         </div>
       </div>
     </div>

@@ -2,7 +2,11 @@ import type { Express, Request } from "express";
 import type { Server } from "node:http";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import * as db from "./agent/db";
-import { handleInbound, decideApproval, runBackground, models } from "./agent/agent";
+import { models } from "./agent/agent";
+import { orchestrator, orchestratorName } from "./agent/orchestrator";
+import { providerName } from "./agent/llm";
+import { tracingEnabled } from "./agent/tracing";
+import { emailSender, emailInboundConfigured, normalizeInbound, validInboundEmailAuth, isAgentAddressed } from "./agent/email";
 import { policy, policyPath, limits } from "./agent/policy";
 import { exportOMF, importOMF } from "./agent/omf";
 import { sendMessageSchema, decideApprovalSchema, settingsUpdateSchema, type StateSnapshot } from "@shared/schema";
@@ -25,15 +29,19 @@ function snapshot(): StateSnapshot {
       optIns: db.getSetting<string[]>("opt_ins", []),
       plannerModel: models.planner,
       fastModel: models.fast,
-      llmConfigured: !!(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_BASE_URL),
+      llmConfigured: providerName() !== "anthropic" || !!(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_BASE_URL),
+      llmProvider: providerName(),
       smsConfigured: !!process.env.TWILIO_AUTH_TOKEN,
+      emailConfigured: emailInboundConfigured() || emailSender().name !== "simulated-outbox",
+      tracing: tracingEnabled(),
+      orchestrator: orchestratorName(),
     },
     policy: { version: policy.version, defaultTier: policy.default_tier ?? "T3", actions: policy.actions.map((a) => ({ match: a.match, tier: a.tier })) },
   };
 }
 
 // Twilio request signature check: HMAC-SHA1 over the full URL plus sorted POST params.
-function validTwilioSignature(req: Request): boolean {
+export function validTwilioSignature(req: Request): boolean {
   const token = process.env.TWILIO_AUTH_TOKEN;
   if (!token) return false;
   const url = (process.env.PUBLIC_BASE_URL || "") + req.originalUrl;
@@ -47,7 +55,8 @@ const xmlEscape = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").
 
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
   db.seed();
-  console.log(`[opa] policy loaded from ${policyPath}; planner=${models.planner} fast=${models.fast}`);
+  const orch = await orchestrator();
+  console.log(`[opa] policy loaded from ${policyPath}; planner=${models.planner} fast=${models.fast} provider=${providerName()} orchestrator=${orch.name}`);
 
   app.get("/api/health", (_req, res) => res.json({ ok: true }));
   app.get("/api/state", (_req, res) => res.json(snapshot()));
@@ -55,14 +64,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.post("/api/messages", async (req, res) => {
     const parsed = sendMessageSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: "Message text is required" });
-    const reply = await handleInbound(parsed.data.text, "web");
+    const reply = await orch.runTurn(parsed.data.text, "web");
     res.json({ reply });
   });
 
   app.post("/api/approvals/:id", async (req, res) => {
     const parsed = decideApprovalSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: "Invalid decision" });
-    const r = await decideApproval(Number(req.params.id), parsed.data.decision, !!parsed.data.allowCategory, "web");
+    const r = await orch.runApproval(Number(req.params.id), parsed.data.decision, !!parsed.data.allowCategory, "web");
     res.status(r.ok ? 200 : 409).json(r);
   });
 
@@ -88,7 +97,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   });
 
   app.post("/api/background/run", async (_req, res) => {
-    try { res.json({ text: await runBackground() }); }
+    try { res.json({ text: await orch.runBackground() }); }
     catch (e: any) { db.logEvent("error", `Background lane failed: ${e.message}`, null); res.status(502).json({ message: e.message }); }
   });
 
@@ -124,12 +133,38 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const from = String(req.body.From || "");
     if (process.env.OWNER_PHONE && from !== process.env.OWNER_PHONE) return res.status(403).send("unknown sender");
     const text = String(req.body.Body || "").slice(0, 2000);
-    const reply = await handleInbound(text, "sms");
+    const reply = await orch.runTurn(text, "sms");
     res.type("text/xml").send(`<?xml version="1.0" encoding="UTF-8"?><Response><Message>${xmlEscape(reply.slice(0, 1500))}</Message></Response>`);
   });
 
+  // Email channel. Mail to the agent address (AGENT_EMAIL) from the owner
+  // (OWNER_EMAIL) is treated as a command and answered by email; all other
+  // verified inbound mail lands in the inbox as untrusted content.
+  // Auth: MAILGUN_SIGNING_KEY (webhook signature) or EMAIL_CHANNEL_SECRET (shared header).
+  app.post("/api/channels/email", async (req, res) => {
+    if (!validInboundEmailAuth(req)) return res.status(403).send("invalid or missing credentials");
+    const mail = normalizeInbound(req.body ?? {});
+    if (!mail.from) return res.status(400).send("missing sender");
+    db.logEvent("message_in", `EMAIL from ${mail.from}: ${mail.subject}`.slice(0, 160), { channel: "email", from: mail.from });
+    if (!isAgentAddressed(mail)) {
+      db.addInboundEmail(mail.from, mail.subject, mail.text);
+      return res.json({ delivered: "inbox" });
+    }
+    const text = `${mail.subject === "(no subject)" ? "" : `Subject: ${mail.subject}\n\n`}${mail.text}`.slice(0, 2000) || mail.subject;
+    try {
+      const reply = await orch.runTurn(text, "email");
+      const sender = emailSender();
+      const sent = await sender.send(mail.from, `Re: ${mail.subject}`, reply);
+      db.logEvent("message_out", `EMAIL to ${mail.from}: ${reply.slice(0, 140)}`, { channel: "email", delivery: sent.delivery });
+      res.json({ delivered: "replied", via: sender.name, reply });
+    } catch (e: any) {
+      db.logEvent("error", `Email channel failed: ${e.message}`, null);
+      res.status(502).json({ message: e.message });
+    }
+  });
+
   const interval = Number(process.env.OPA_BACKGROUND_INTERVAL_MIN || 0);
-  if (interval > 0) setInterval(() => runBackground().catch((e) => db.logEvent("error", `Background lane failed: ${e.message}`, null)), interval * 60000);
+  if (interval > 0) setInterval(() => orch.runBackground().catch((e) => db.logEvent("error", `Background lane failed: ${e.message}`, null)), interval * 60000);
 
   return httpServer;
 }
