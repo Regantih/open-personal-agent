@@ -1,0 +1,12 @@
+{
+  "name": "opa-demo-recorder",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Records a live screencast of the open-personal-agent demo flow",
+  "scripts": {
+    "record": "node record-demo.js"
+  },
+  "dependencies": {
+    "playwright-core": "^1.64.1"
+  }
+}
