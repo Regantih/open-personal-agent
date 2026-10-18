@@ -17,6 +17,8 @@ import { exportOMF, importOMF } from "./agent/omf";
 import { requireUser } from "./auth";
 import * as auth from "./auth";
 import { securityHeaders, rateLimit } from "./security";
+import { browserStatus, latestFrame, screenshot, forwardInput, closeBrowser } from "./agent/browser";
+import { ttsConfigured, synthesize } from "./agent/voice";
 import { sendMessageSchema, decideApprovalSchema, settingsUpdateSchema, type StateSnapshot } from "@shared/schema";
 
 async function snapshot(ctx: Ctx): Promise<StateSnapshot> {
@@ -285,6 +287,34 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   });
 
   app.post("/api/reset", async (req, res) => { await ctx(req).store.seed(true); res.json({ ok: true }); });
+
+  // ---------- browser rung (live view + takeover) ----------
+  app.get("/api/browser/status", (req, res) => res.json(browserStatus((req as any).userId)));
+  app.get("/api/browser/frame", async (req, res) => {
+    const f = latestFrame((req as any).userId) ?? (await screenshot((req as any).userId));
+    if (!f) return res.status(404).json({ message: "no browser session" });
+    res.setHeader("Content-Type", "image/jpeg");
+    res.setHeader("Cache-Control", "no-store");
+    res.send(f);
+  });
+  app.post("/api/browser/input", async (req, res) => {
+    try {
+      await forwardInput((req as any).userId, req.body ?? {});
+      res.json({ ok: true });
+    } catch (e: any) { res.status(400).json({ message: e.message }); }
+  });
+  app.post("/api/browser/close", async (req, res) => res.json({ closed: await closeBrowser((req as any).userId) }));
+
+  // ---------- voice lane ----------
+  app.get("/api/voice/status", (_req, res) => res.json({ tts: ttsConfigured() }));
+  app.post("/api/voice/tts", async (req, res) => {
+    try {
+      const audio = await synthesize(String(req.body?.text || ""));
+      res.setHeader("Content-Type", "audio/mpeg");
+      res.setHeader("Cache-Control", "no-store");
+      res.send(audio);
+    } catch (e: any) { res.status(503).json({ message: e.message }); }
+  });
 
   const interval = Number(process.env.OPA_BACKGROUND_INTERVAL_MIN || 0);
   if (interval > 0) setInterval(() => {

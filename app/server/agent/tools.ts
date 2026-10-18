@@ -4,6 +4,7 @@ import { sampleProvider, getOffer } from "./flights";
 import { issueSingleUseCard } from "./vault";
 import { limits } from "./policy";
 import { emailSender } from "./email";
+import * as browser from "./browser";
 
 // Each tool declares the policy action it performs. The runner (agent.ts) evaluates that action against the Risk Policy
 // before execute() is ever called. The model never executes anything directly.
@@ -182,6 +183,65 @@ export const tools: ToolDef[] = [
     input_schema: { type: "object", properties: { fact_id: { type: "string" } }, required: ["fact_id"] },
     prepare: (i) => ({ action: "memory.write", summary: `Forget fact ${i.fact_id}` }),
     async execute(i, ctx) { return { forgotten: await ctx.store.forgetFact(i.fact_id) }; },
+  },
+  // ---------- browser rung ----------
+  // Everything here is T3 by default_tier plus explicit policy entries: the
+  // agent is operating a real browser on the open web. Domain allowlist is
+  // enforced in prepare() (before any approval exists) and again inside
+  // browser.navigate (an approved mandate cannot redirect off-allowlist).
+  {
+    name: "browser_open",
+    description: "Open a URL in the agent's browser session (a real Chromium the user can watch and take over via the Browser panel). Returns page text plus numbered interactive elements to use with browser_act.",
+    input_schema: { type: "object", properties: { url: { type: "string" } }, required: ["url"] },
+    taints: true,
+    prepare: (i) => {
+      const err = browser.checkUrlAllowed(String(i.url || ""));
+      if (err) throw new Error(err);
+      return { action: "browser.navigate", summary: `Open ${i.url} in the agent browser`, merchant: new URL(String(i.url).startsWith("http") ? i.url : `https://${i.url}`).hostname };
+    },
+    async execute(i, ctx) { return browser.navigate(ctx.userId, String(i.url)); },
+  },
+  {
+    name: "browser_act",
+    description: "Act in the open browser session: click / type / press a key / scroll / navigate. Target elements by ref number from the last snapshot (or a CSS selector).",
+    input_schema: {
+      type: "object",
+      properties: {
+        op: { type: "string", enum: ["navigate", "click", "type", "press", "scroll"] },
+        ref: { type: "integer", description: "element ref [n] from the page snapshot" },
+        selector: { type: "string", description: "CSS selector fallback" },
+        text: { type: "string", description: "visible text to click (text=...)" },
+        value: { type: "string", description: "text to type, or 'up'/'down' for scroll" },
+        key: { type: "string", description: "key name for press, e.g. Enter, Tab" },
+        url: { type: "string", description: "target for navigate" },
+      },
+      required: ["op"],
+    },
+    taints: true,
+    prepare: (i) => {
+      if (i.op === "navigate") {
+        const err = browser.checkUrlAllowed(String(i.url || ""));
+        if (err) throw new Error(err);
+        return { action: "browser.navigate", summary: `Navigate browser to ${i.url}` };
+      }
+      return { action: "browser.act", summary: `Browser ${i.op}${i.ref ? ` on element [${i.ref}]` : ""}${i.selector ? ` ${i.selector}` : ""}${i.value ? `: "${String(i.value).slice(0, 40)}"` : ""}` };
+    },
+    async execute(i, ctx) { return browser.act(ctx.userId, i); },
+  },
+  {
+    name: "browser_read",
+    description: "Re-read the current page: url, text content, and a fresh element map. Free read; use after pages load or when refs go stale.",
+    input_schema: { type: "object", properties: {}, required: [] },
+    taints: true,
+    prepare: () => ({ action: "browser.read", summary: "Read current browser page" }),
+    async execute(_i, ctx) { return browser.readPage(ctx.userId); },
+  },
+  {
+    name: "browser_close",
+    description: "Close the agent's browser session (clears cookies for this session).",
+    input_schema: { type: "object", properties: {}, required: [] },
+    prepare: () => ({ action: "browser.close", summary: "Close browser session" }),
+    async execute(_i, ctx) { return { closed: await browser.closeBrowser(ctx.userId) }; },
   },
 ];
 

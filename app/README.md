@@ -16,7 +16,7 @@ This is a reference implementation of the [playbook](../docs/). It is small on p
 - Two model lanes: a planner model for real-time turns and a fast model for the background check (proactive digest). Anthropic by default; any OpenAI-compatible endpoint (vLLM, Ollama, Groq) works too.
 - An append-only activity log of every message, model call, policy decision, approval, and execution. Optional Langfuse tracing mirrors every turn, generation, and tool call.
 - Optional multi-user mode: passwordless sign-in (email magic link or SMS OTP), per-user storage isolation, per-user mandate secrets, per-user agent email addresses, channel binding, and encrypted bring-your-own-model-key (BYOK) vaulting with a free-tier turn cap.
-- A 58-task eval suite (`npm run eval`) exercises the whole pipeline — policy, approvals, taint escalation, kill switch, memory, and tenancy isolation — with a scripted model, no API key needed.
+- A 64-task eval suite (`npm run eval`) exercises the whole pipeline — policy, approvals, taint escalation, kill switch, memory, tenancy isolation, and the browser rung — with a scripted model, no API key needed.
 
 ## Real vs. sample
 
@@ -34,9 +34,11 @@ This is a reference implementation of the [playbook](../docs/). It is small on p
 | Orchestration | Pluggable: inline loop (default) or Temporal durable workflows (`OPA_ORCHESTRATOR=temporal`) |
 | Tracing | Built-in event log plus optional Langfuse mirror (`LANGFUSE_*` env vars) |
 | Multi-user | Opt-in (`OPA_MULTI_USER=1`): magic-link/OTP sign-in, per-user stores, BYOK vault, per-user agent email |
+| Browser rung | Real Chromium via `playwright-core` — `browser_open`/`browser_act`/`browser_read`/`browser_close`, T3-gated, domain allowlist, CDP screencast live view + input takeover in the Browser tab, sessions revoked on kill switch |
+| Voice | Browser Web Speech STT → normal turn pipeline → ElevenLabs TTS (`ELEVENLABS_API_KEY`); mic + speaker buttons in the composer |
 | Storage | SQLite (default) or PostgreSQL via `DATABASE_URL` — same `Store` interface, verified against Postgres 16 |
 | Rate limits & headers | Fixed-window limiter on `/api/auth/*` and message/webhook routes; CSP/HSTS/security headers on every response (`server/security.ts`) |
-| Eval suite | 58 deterministic tasks (`npm run eval`) |
+| Eval suite | 64 deterministic tasks (`npm run eval`) |
 
 ## Run it
 
@@ -98,6 +100,12 @@ Run from the `app/` directory so it can find `../spec/risk-policy/policy.example
 | `SMTP_URL` (+ `EMAIL_FROM`) | Real outbound mail via any SMTP relay | simulated outbox |
 | `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` / `LANGFUSE_BASE_URL` | Mirror turns, generations, and tools to Langfuse | tracing off |
 | `OPA_ORCHESTRATOR` | `inline` or `temporal` | `inline` |
+| `OPA_CHROME_PATH` | Chrome/Chromium executable for the browser rung | `channel: "chrome"` auto-detect |
+| `OPA_BROWSER_WS_ENDPOINT` | Remote CDP endpoint (Steel/browserless sidecar) instead of local Chrome | unset |
+| `OPA_BROWSER_HEADFUL` | `1` shows the browser window instead of headless | headless |
+| `OPA_BROWSER_ALLOWLIST` | Comma-separated domain suffixes (`*` = all); unset = all allowed | unset |
+| `OPA_BROWSER_IDLE_MS` | Reap idle browser sessions after N ms | `600000` |
+| `ELEVENLABS_API_KEY` / `ELEVENLABS_VOICE` | Reply voice (`POST /api/voice/tts`) | voice off |
 | `TEMPORAL_ADDRESS` / `TEMPORAL_NAMESPACE` / `TEMPORAL_TASK_QUEUE` | Temporal connection | `localhost:7233` / `default` / `opa-agent` |
 
 ### Connect SMS

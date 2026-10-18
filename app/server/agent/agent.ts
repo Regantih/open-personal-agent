@@ -1,6 +1,7 @@
 import { storeFor, type Store } from "./db";
 import { tools, toolByName, type ToolContext } from "./tools";
 import { evaluate, confirmationTtlMs, killPhrases, policy } from "./policy";
+import { revokeBrowserSessions } from "./browser";
 import { signMandate, verifyMandate } from "./vault";
 import { complete, providerName, type CallAuth, type CanonicalMessage, type ModelToolSchema } from "./llm";
 import { startTrace } from "./tracing";
@@ -74,7 +75,10 @@ async function runTool(name: string, input: any, ctx: ToolContext): Promise<Reco
   const tool = toolByName.get(name);
   if (!tool) return { status: "error", message: `Unknown tool ${name}` };
   let prep;
-  try { prep = await tool.prepare(input, ctx); } catch (e: any) { return { status: "error", message: e.message }; }
+  try { prep = await tool.prepare(input, ctx); } catch (e: any) {
+    await store.logEvent("error", `${name} failed: ${e.message}`, { tool: name });
+    return { status: "error", message: e.message };
+  }
   const decision = await evaluate(prep.action, { tainted: ctx.tainted, amountUsd: prep.amountUsd ?? null, store });
   await store.logEvent("policy", `${decision.outcome.toUpperCase()} ${prep.action} (${decision.tier}${decision.escalated ? `, escalated from ${decision.baseTier}` : ""})`, {
     tool: name, action: prep.action, tier: decision.tier, base_tier: decision.baseTier, escalated: decision.escalated, matched_rule: decision.matched, reason: decision.reason, summary: prep.summary,
@@ -243,6 +247,11 @@ export async function handleInbound(ctx: Ctx, text: string, channel: "web" | "sm
   if (killPhrases.some((p) => t === p || t.startsWith(p))) {
     await store.setSetting("paused", true);
     await store.denyAllPending("Cancelled by kill switch");
+    // policy.kill_switch.actions: pause_all_tasks + freeze cards above; the
+    // browser rung gets a real revocation too.
+    if ((policy.kill_switch?.actions ?? []).includes("revoke_browser_sessions")) {
+      await revokeBrowserSessions(ctx.userId).catch(() => {});
+    }
     await store.logEvent("kill_switch", "Kill switch: paused all tasks, denied pending approvals, froze agent cards", { actions: policy.kill_switch?.actions ?? [] });
     return reply(store, "Stopped. I've paused everything, cancelled pending approvals, and frozen agent cards. I can still read and answer questions. Reply RESUME when you want me to act again.", channel);
   }

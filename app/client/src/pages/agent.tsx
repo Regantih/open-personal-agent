@@ -11,8 +11,8 @@ import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import {
-  ArrowUp, Bell, Brain, Check, CircleAlert, Cpu, Download, ExternalLink, KeyRound, MessageSquare, OctagonX, Play, RotateCcw,
-  ShieldCheck, Sparkles, Trash2, Upload, Wrench, X, CalendarDays, Mail, CreditCard, Plane, Send, Radio,
+  ArrowUp, Bell, Brain, Check, CircleAlert, Cpu, Download, ExternalLink, KeyRound, MessageSquare, Mic, MicOff, OctagonX, Play, RotateCcw,
+  ShieldCheck, Sparkles, Trash2, Upload, Volume2, Wrench, X, CalendarDays, Mail, CreditCard, Plane, Send, Radio,
 } from "lucide-react";
 
 const REPO_URL = "https://github.com/Regantih/open-personal-agent";
@@ -139,14 +139,35 @@ function Conversation({ state }: { state: StateSnapshot }) {
   const { toast } = useToast();
   const [text, setText] = useState("");
   const [pendingText, setPendingText] = useState<string | null>(null);
+  const [listening, setListening] = useState(false);
+  const [speakReplies, setSpeakReplies] = useState(false);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const recogRef = useRef<any>(null);
   const lastMsg = state.messages[state.messages.length - 1];
   const pendingCommitted = pendingText !== null && lastMsg?.role === "user" && lastMsg.text === pendingText;
   const endRef = useRef<HTMLDivElement>(null);
   const pending = state.approvals.filter((a) => a.status === "pending");
 
+  const voiceStatus = useQuery<{ tts: boolean }>({ queryKey: ["/api/voice/status"], queryFn: getQueryFn({ on401: "returnNull" }) });
+  const SpeechRec: any = typeof window !== "undefined" ? ((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition) : null;
+  const ttsOn = voiceStatus.data?.tts && speakReplies;
+
+  const speak = async (reply: string) => {
+    try {
+      const r = await fetch(`${API_BASE}/api/voice/tts`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: reply }) });
+      if (!r.ok) return;
+      const blob = await r.blob();
+      audioRef.current?.pause();
+      const a = new Audio(URL.createObjectURL(blob));
+      audioRef.current = a;
+      void a.play();
+    } catch { /* voice unavailable */ }
+  };
+
   const send = useMutation({
     mutationFn: async (t: string) => (await apiRequest("POST", "/api/messages", { text: t })).json(),
     onMutate: (t) => setPendingText(t),
+    onSuccess: (data) => { if (ttsOn && data?.reply) void speak(data.reply); },
     onSettled: () => { setPendingText(null); queryClient.invalidateQueries({ queryKey: ["/api/state"] }); },
     onError: (e: Error) => toast({ title: "Message failed", description: e.message, variant: "destructive" }),
   });
@@ -158,6 +179,24 @@ function Conversation({ state }: { state: StateSnapshot }) {
     if (!v || send.isPending) return;
     setText("");
     send.mutate(v);
+  };
+
+  const toggleMic = () => {
+    if (!SpeechRec) { toast({ title: "No speech recognition", description: "This browser has no Web Speech API (Chrome/Edge do).", variant: "destructive" }); return; }
+    if (listening) { recogRef.current?.stop(); setListening(false); return; }
+    const r = new SpeechRec();
+    recogRef.current = r;
+    r.lang = "en-US";
+    r.interimResults = true;
+    r.onresult = (e: any) => {
+      const res = e.results[e.results.length - 1];
+      setText(res[0].transcript);
+      if (res.isFinal) { setListening(false); r.stop(); submit(res[0].transcript); }
+    };
+    r.onerror = () => setListening(false);
+    r.onend = () => setListening(false);
+    r.start();
+    setListening(true);
   };
 
   return (
@@ -207,6 +246,14 @@ function Conversation({ state }: { state: StateSnapshot }) {
               data-testid="input-message"
               aria-label="Message"
             />
+            <Button type="button" size="icon" variant={listening ? "default" : "outline"} className={`h-11 w-11 shrink-0 ${listening ? "animate-pulse" : ""}`} onClick={toggleMic} data-testid="button-mic" aria-label={listening ? "Stop listening" : "Talk to your agent"} title="Talk to your agent">
+              {listening ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
+            </Button>
+            {voiceStatus.data?.tts && (
+              <Button type="button" size="icon" variant={speakReplies ? "default" : "outline"} className="h-11 w-11 shrink-0" onClick={() => { setSpeakReplies(!speakReplies); if (speakReplies) audioRef.current?.pause(); }} data-testid="button-speaker" aria-label="Speak replies" title="Speak replies (ElevenLabs)">
+                <Volume2 className="h-5 w-5" />
+              </Button>
+            )}
             <Button type="submit" size="icon" className="h-11 w-11 shrink-0" disabled={!text.trim() || send.isPending} data-testid="button-send" aria-label="Send">
               <ArrowUp className="h-5 w-5" />
             </Button>
@@ -403,6 +450,91 @@ function DataTab({ state }: { state: StateSnapshot }) {
           </ul>
         ) : <p className="text-sm text-muted-foreground">No drafts or sent mail.</p>}
       </Section>
+    </div>
+  );
+}
+
+interface BrowserStatus { open: boolean; url: string; title: string; frameBytes: number }
+
+function BrowserTab() {
+  const { toast } = useToast();
+  const imgRef = useRef<HTMLImageElement>(null);
+  const [frameUrl, setFrameUrl] = useState<string | null>(null);
+  const status = useQuery<BrowserStatus>({
+    queryKey: ["/api/browser/status"],
+    queryFn: getQueryFn({ on401: "returnNull" }),
+    refetchInterval: 2000,
+  });
+  const s = status.data;
+
+  // Poll the latest screencast jpeg while a session is open.
+  useEffect(() => {
+    if (!s?.open) { setFrameUrl(null); return; }
+    let alive = true;
+    let objectUrl: string | null = null;
+    const tick = async () => {
+      try {
+        const r = await fetch(`${API_BASE}/api/browser/frame`, { credentials: "include" });
+        if (!alive) return;
+        if (!r.ok) return;
+        const blob = await r.blob();
+        if (objectUrl) URL.revokeObjectURL(objectUrl);
+        objectUrl = URL.createObjectURL(blob);
+        setFrameUrl(objectUrl);
+      } catch { /* session may have closed */ }
+    };
+    void tick();
+    const t = setInterval(tick, 900);
+    return () => { alive = false; clearInterval(t); if (objectUrl) URL.revokeObjectURL(objectUrl); };
+  }, [s?.open]);
+
+  const sendInput = useMutation({
+    mutationFn: async (body: Record<string, unknown>) => (await apiRequest("POST", "/api/browser/input", body)).json(),
+    onError: (e: any) => toast({ title: "Input failed", description: e.message, variant: "destructive" }),
+  });
+  const close = useMutation({
+    mutationFn: async () => (await apiRequest("POST", "/api/browser/close", {})).json(),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/browser/status"] }),
+  });
+
+  // Map a click on the scaled <img> back to page coordinates.
+  const onClickImage = (e: React.MouseEvent<HTMLImageElement>) => {
+    const img = imgRef.current;
+    if (!img || !img.naturalWidth) return;
+    const rect = img.getBoundingClientRect();
+    const x = Math.round(((e.clientX - rect.left) / rect.width) * img.naturalWidth);
+    const y = Math.round(((e.clientY - rect.top) / rect.height) * img.naturalHeight);
+    sendInput.mutate({ kind: "click", x, y });
+  };
+  const onKey = (e: React.KeyboardEvent) => {
+    e.preventDefault();
+    const map: Record<string, string> = { Enter: "Enter", Tab: "Tab", Backspace: "Backspace", Escape: "Escape", ArrowDown: "ArrowDown", ArrowUp: "ArrowUp" };
+    sendInput.mutate(map[e.key] ? { kind: "key", key: map[e.key] } : { kind: "type", text: e.key });
+  };
+
+  return (
+    <div>
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <p className="text-xs text-muted-foreground">
+          The agent's browser — a real Chromium session. Every action it takes here needs T3 approval. Click into the view to take over (e.g. log in yourself — the agent never sees your keystrokes as credentials unless it reads the page).
+        </p>
+        {s?.open && <Button size="sm" variant="outline" onClick={() => close.mutate()} data-testid="button-close-browser">Close session</Button>}
+      </div>
+      {s?.open ? (
+        <div>
+          <div className="mb-2 flex items-center gap-2 font-mono text-[11px] text-muted-foreground" data-testid="text-browser-url"><ExternalLink className="h-3 w-3" />{s.url}</div>
+          <div className="overflow-hidden rounded-lg border bg-black" tabIndex={0} onKeyDown={onKey} data-testid="browser-view" role="application" aria-label="Agent browser live view — click to take over">
+            {frameUrl
+              ? <img ref={imgRef} src={frameUrl} alt="live browser" className="block w-full cursor-crosshair select-none" onClick={onClickImage} draggable={false} />
+              : <div className="grid h-64 place-items-center text-sm text-muted-foreground">Waiting for first frame…</div>}
+          </div>
+          <p className="mt-1.5 text-[11px] text-muted-foreground">Click = mouse click · typing goes to the page · refreshes ~1/s</p>
+        </div>
+      ) : (
+        <div className="grid h-56 place-items-center rounded-lg border border-dashed text-sm text-muted-foreground" data-testid="browser-empty">
+          No session yet. Ask the agent to open a page — e.g. <span className="font-mono">"open github.com/Regantih and tell me about my repos"</span> — approve it, then watch here.
+        </div>
+      )}
     </div>
   );
 }
@@ -709,6 +841,7 @@ function ControlPanel({ state }: { state: StateSnapshot }) {
           <TabsTrigger value="activity" className="px-2.5 data-[state=active]:bg-muted sm:px-3" data-testid="tab-activity">Activity</TabsTrigger>
           <TabsTrigger value="memory" className="px-2.5 data-[state=active]:bg-muted sm:px-3" data-testid="tab-memory">Memory</TabsTrigger>
           <TabsTrigger value="data" className="px-2.5 data-[state=active]:bg-muted sm:px-3" data-testid="tab-data">Data</TabsTrigger>
+          <TabsTrigger value="browser" className="px-2.5 data-[state=active]:bg-muted sm:px-3" data-testid="tab-browser">Browser</TabsTrigger>
           <TabsTrigger value="policy" className="px-2.5 data-[state=active]:bg-muted sm:px-3" data-testid="tab-policy">Policy</TabsTrigger>
         </TabsList>
       </div>
@@ -717,6 +850,7 @@ function ControlPanel({ state }: { state: StateSnapshot }) {
         <TabsContent value="activity" className="mt-0"><ActivityTab events={state.events} /></TabsContent>
         <TabsContent value="memory" className="mt-0"><MemoryTab facts={state.facts} /></TabsContent>
         <TabsContent value="data" className="mt-0"><DataTab state={state} /></TabsContent>
+        <TabsContent value="browser" className="mt-0"><BrowserTab /></TabsContent>
         <TabsContent value="policy" className="mt-0"><PolicyTab state={state} /></TabsContent>
       </div>
     </Tabs>

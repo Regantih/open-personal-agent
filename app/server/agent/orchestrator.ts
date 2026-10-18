@@ -15,7 +15,8 @@
 // All methods take userId (not the in-memory Ctx) because workflow arguments
 // must serialize; the activity reconstructs the store from the id.
 
-import { fileURLToPath } from "node:url";
+import { existsSync } from "node:fs";
+import path from "node:path";
 import { storeFor } from "./db";
 import { handleInbound, decideApproval, runBackground, ctxFor } from "./agent";
 
@@ -54,9 +55,17 @@ const temporal: Orchestrator = {
     // Run the worker in the same process; point workers at a separate deploy for production.
     // Computed specifier: the file only exists/typechecks when the SDK is installed.
     const activitiesModule = "../temporal/activities";
+    // workflows.ts must exist as a real file for the worker to bundle — it is
+    // always a source-tree path, never inside dist. Resolve cwd-relative so the
+    // CJS bundle works identically to tsx dev (import.meta is empty under CJS).
+    const workflowsPath = [
+      path.resolve(process.cwd(), "server/temporal/workflows.ts"),
+      path.resolve(process.cwd(), "app/server/temporal/workflows.ts"),
+    ].find((p) => existsSync(p));
+    if (!workflowsPath) throw new Error("server/temporal/workflows.ts not found");
     const worker = await Worker.create({
       connection: await NativeConnection.connect({ address }),
-      workflowsPath: fileURLToPath(new URL("../temporal/workflows.ts", import.meta.url)),
+      workflowsPath,
       activities: await import(/* @vite-ignore */ activitiesModule),
       taskQueue,
       namespace,

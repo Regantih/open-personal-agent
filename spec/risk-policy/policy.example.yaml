@@ -47,6 +47,14 @@ actions:
     tier: T2
   - match: "booking.create.nonrefundable"
     tier: T3
+  - match: "browser.read"
+    tier: T0
+  - match: "browser.close"
+    tier: T1
+  - match: "browser.navigate"
+    tier: T3
+  - match: "browser.act"
+    tier: T3
   - match: "payment.*"
     tier: T3
   - match: "subscription.cancel"
