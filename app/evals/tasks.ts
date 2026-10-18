@@ -918,4 +918,86 @@ export const tasks: EvalTask[] = [
       { expect: { paused: false } },
     ],
   },
+
+  // ---------- live-provider layer ----------
+  {
+    id: "p01", name: "Providers: connection metadata round-trips and upserts", category: "providers",
+    script: [
+      { run: async (h) => {
+        const uid = h.ctx.userId;
+        await h.db.saveProviderConnection(uid, "google", "alice@example.com", ["openid", "email", "gmail.readonly"]);
+        const c = await h.db.getProviderConnection(uid, "google");
+        if (!c || c.accountLabel !== "alice@example.com" || !c.scopes.includes("gmail.readonly")) throw new Error("connection not stored");
+        if ((await h.db.listProviderConnections(uid)).filter((x) => x.provider === "google").length !== 1) throw new Error("list wrong");
+        await h.db.saveProviderConnection(uid, "google", "alice@corp.example", ["openid"]);
+        const c2 = await h.db.getProviderConnection(uid, "google");
+        if (c2!.accountLabel !== "alice@corp.example" || c2!.scopes.includes("gmail.readonly")) throw new Error("upsert failed");
+        if (!(await h.db.deleteProviderConnection(uid, "google"))) throw new Error("delete failed");
+        if (await h.db.getProviderConnection(uid, "google")) throw new Error("still connected after delete");
+      } },
+    ],
+  },
+  {
+    id: "p02", name: "Providers: connections are isolated per user", category: "providers",
+    script: [
+      { run: async (h) => {
+        const a = await h.db.findOrCreateUser({ email: "prov-a@example.com" });
+        const b = await h.db.findOrCreateUser({ email: "prov-b@example.com" });
+        await h.db.saveProviderConnection(a.id, "google", "a@example.com", ["openid"]);
+        if (await h.db.getProviderConnection(b.id, "google")) throw new Error("a's connection leaked to b");
+        if (!(await h.db.getProviderConnection(a.id, "google"))) throw new Error("a lost its connection");
+        await h.db.deleteProviderConnection(a.id, "google");
+      } },
+    ],
+  },
+  {
+    id: "p03", name: "Providers: remote mirror dedupes on provider_ref", category: "providers",
+    script: [
+      { run: async (h) => {
+        const n0 = (await h.store.listCalendar()).length;
+        const ev = { title: "Remote standup", start: Date.now() + 86400000, end: Date.now() + 86400000 + 1800000, kind: "event" as const, location: null, providerRef: "gcal:abc123" };
+        if ((await h.store.mirrorCalendar([ev])) !== 1) throw new Error("first mirror did not insert");
+        if ((await h.store.mirrorCalendar([ev])) !== 0) throw new Error("second mirror duplicated");
+        if ((await h.store.listCalendar()).length !== n0 + 1) throw new Error("calendar count wrong after mirror");
+        const i0 = (await h.store.listInbox()).length;
+        const mail = { sender: "x@y.z", subject: "hi", body: "b", receivedAt: Date.now(), providerRef: "gmail:m1" };
+        await h.store.mirrorInbox([mail]);
+        if ((await h.store.mirrorInbox([mail])) !== 0) throw new Error("inbox mirror duplicated");
+        if ((await h.store.listInbox()).length !== i0 + 1) throw new Error("inbox count wrong after mirror");
+      } },
+    ],
+  },
+  {
+    id: "p04", name: "Providers: OAuth state is signed and tamper-proof", category: "providers",
+    script: [
+      { run: async () => {
+        const g = await import("../server/agent/providers/google");
+        process.env.GOOGLE_CLIENT_ID = "cid"; process.env.GOOGLE_CLIENT_SECRET = "csec"; process.env.PUBLIC_BASE_URL = "https://opa.example.com";
+        if (!g.googleConfigured()) throw new Error("googleConfigured false with envs set");
+        const url = await g.googleAuthUrl("user-42");
+        const state = new URL(url).searchParams.get("state")!;
+        if ((await g.verifyState(state)) !== "user-42") throw new Error("valid state rejected");
+        const [u, n] = state.split(".");
+        let threw = false;
+        try { await g.verifyState(`${u}.${n}.${"0".repeat(40)}`); } catch { threw = true; }
+        if (!threw) throw new Error("tampered state accepted");
+        threw = false;
+        try { await g.verifyState("other-user." + state.split(".").slice(1).join(".")); } catch { threw = true; }
+        if (!threw) throw new Error("state transplanted to a different user");
+        delete process.env.GOOGLE_CLIENT_ID; delete process.env.GOOGLE_CLIENT_SECRET;
+      } },
+    ],
+  },
+  {
+    id: "p05", name: "Providers: outbox provider_ref routes send through Gmail", category: "providers",
+    script: [
+      { run: async (h) => {
+        const d = await h.store.addOutbox("x@y.z", "s", "b", "draft", "gmail-draft:xyz");
+        const got = await h.store.getOutbox(d.id);
+        if (got?.providerRef !== "gmail-draft:xyz") throw new Error("providerRef not persisted");
+        const plain = await h.store.addOutbox("x@y.z", "s", "b", "draft");
+        if ((await h.store.getOutbox(plain.id))!.providerRef) throw new Error("plain draft has a providerRef");
+      } },
+    ],
+  },
 ];

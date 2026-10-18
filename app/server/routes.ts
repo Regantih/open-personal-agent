@@ -4,7 +4,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import {
   storeFor, DEFAULT_SUGGESTIONS, multiUser, ensureLocalUser, LOCAL_USER, initDb,
   listUserIds, getUserByAgentToken, parseAgentToken, agentAddressFor, findUserByChannel,
-  listBindings, listUserKeyProviders, getUser,
+  listBindings, listUserKeyProviders, getUser, listProviderConnections,
 } from "./agent/db";
 import { saveUserKey, deleteUserKey, freeTierRemaining, FREE_PLANNER_TURNS_PER_DAY } from "./agent/keys";
 import { models, ctxFor, type Ctx } from "./agent/agent";
@@ -19,6 +19,8 @@ import * as auth from "./auth";
 import { securityHeaders, rateLimit } from "./security";
 import { browserStatus, latestFrame, screenshot, forwardInput, closeBrowser } from "./agent/browser";
 import { ttsConfigured, synthesize } from "./agent/voice";
+import * as google from "./agent/providers/google";
+import { flightsLive } from "./agent/flights";
 import { sendMessageSchema, decideApprovalSchema, settingsUpdateSchema, type StateSnapshot } from "@shared/schema";
 
 async function snapshot(ctx: Ctx): Promise<StateSnapshot> {
@@ -26,6 +28,7 @@ async function snapshot(ctx: Ctx): Promise<StateSnapshot> {
   const u = await getUser(ctx.userId);
   const usage = await store.usageToday("realtime");
   const freeLeft = await freeTierRemaining(ctx.userId);
+  const gconn = await google.googleConnection(ctx.userId);
   return {
     messages: await store.listMessages(),
     approvals: await store.listApprovals(),
@@ -54,7 +57,15 @@ async function snapshot(ctx: Ctx): Promise<StateSnapshot> {
       userPhone: u?.phone ?? null,
       agentEmail: u ? agentAddressFor(u) : null,
       boundChannels: await listBindings(ctx.userId),
-      keyProviders: await listUserKeyProviders(ctx.userId),
+      keyProviders: (await listUserKeyProviders(ctx.userId)).filter((p) => !p.includes(":")),
+      connections: await listProviderConnections(ctx.userId),
+      oauthProviders: google.googleConfigured() ? ["google"] : [],
+      providerStatus: {
+        calendar: gconn ? "google-calendar" : "local",
+        inbox: gconn ? "gmail" : "local",
+        flights: flightsLive() ? "duffel" : "sample",
+        cards: process.env.LITHIC_API_KEY ? "lithic" : "simulated",
+      },
       usageToday: { turns: usage.turns, inputTokens: usage.inputTokens, outputTokens: usage.outputTokens },
       freeTierRemaining: freeLeft,
       freeTierLimit: freeLeft === null ? null : FREE_PLANNER_TURNS_PER_DAY,
@@ -184,6 +195,32 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       await store.logEvent("error", `Email channel failed: ${e.message}`, null);
       res.status(502).json({ message: e.message });
     }
+  });
+
+  // ---------- provider connections (OAuth) ----------
+  // Start + disconnect need a session; the callback authenticates via the
+  // signed state param (the browser's cookie may not survive the round trip).
+  app.get("/api/connect/google", requireUser, async (req, res) => {
+    try {
+      res.redirect(await google.googleAuthUrl((req as any).userId));
+    } catch (e: any) {
+      res.status(400).json({ message: e.message });
+    }
+  });
+  app.get("/api/connect/google/callback", async (req, res) => {
+    try {
+      const userId = await google.verifyState(String(req.query.state ?? ""));
+      const { accountLabel } = await google.completeGoogleAuth(userId, String(req.query.code ?? ""));
+      await storeFor(userId).logEvent("provider", `Connected Google account${accountLabel ? ` (${accountLabel})` : ""}`, null);
+      res.redirect("/?connected=google");
+    } catch (e: any) {
+      res.redirect(`/?connect_error=${encodeURIComponent(e.message.slice(0, 200))}`);
+    }
+  });
+  app.post("/api/connect/google/disconnect", requireUser, async (req, res) => {
+    await google.disconnectGoogle((req as any).userId);
+    await storeFor((req as any).userId).logEvent("provider", "Disconnected Google account", null);
+    res.json({ disconnected: true });
   });
 
   // Everything below requires a signed-in user (or resolves to 'local' in

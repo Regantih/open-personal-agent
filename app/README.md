@@ -28,9 +28,9 @@ This is a reference implementation of the [playbook](../docs/). It is small on p
 | OMF export and import with schema validation | Real |
 | SMS webhook with Twilio signature check | Verified end-to-end locally (`npm run test:channels`); needs a live Twilio number for production traffic |
 | Email channel | Real inbound webhook (Mailgun signature or shared secret) + outbound via Resend/SMTP; simulated by default |
-| Calendar, inbox, subscriptions | Sample data in SQLite |
-| Flight search and booking | Sample inventory with fictional carriers; bookings are simulated |
-| Single-use cards, cancellations | Simulated |
+| Calendar, inbox, subscriptions | Sample data in SQLite — or **real Google Calendar + Gmail** when a user connects their Google account (Settings → Connections, `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`/`PUBLIC_BASE_URL`). Remote data mirrors into the store so the panels show live state; every send still goes through the normal approval tiers |
+| Flight search and booking | Sample inventory with fictional carriers — or **live Duffel inventory + real orders** with `DUFFEL_API_KEY` (test keys run the same code path) |
+| Single-use cards, cancellations | Simulated — or **real Lithic single-use cards** with `LITHIC_API_KEY` (capped at the approved amount; the model sees only last4) |
 | Orchestration | Pluggable: inline loop (default) or Temporal durable workflows (`OPA_ORCHESTRATOR=temporal`) |
 | Tracing | Built-in event log plus optional Langfuse mirror (`LANGFUSE_*` env vars) |
 | Multi-user | Opt-in (`OPA_MULTI_USER=1`): magic-link/OTP sign-in, per-user stores, BYOK vault, per-user agent email |
@@ -38,7 +38,7 @@ This is a reference implementation of the [playbook](../docs/). It is small on p
 | Voice | Browser Web Speech STT → normal turn pipeline → ElevenLabs TTS (`ELEVENLABS_API_KEY`); mic + speaker buttons in the composer |
 | Storage | SQLite (default) or PostgreSQL via `DATABASE_URL` — same `Store` interface, verified against Postgres 16 |
 | Rate limits & headers | Fixed-window limiter on `/api/auth/*` and message/webhook routes; CSP/HSTS/security headers on every response (`server/security.ts`) |
-| Eval suite | 64 deterministic tasks (`npm run eval`) |
+| Eval suite | 69 deterministic tasks (`npm run eval`) |
 
 ## Run it
 
@@ -106,7 +106,18 @@ Run from the `app/` directory so it can find `../spec/risk-policy/policy.example
 | `OPA_BROWSER_ALLOWLIST` | Comma-separated domain suffixes (`*` = all); unset = all allowed | unset |
 | `OPA_BROWSER_IDLE_MS` | Reap idle browser sessions after N ms | `600000` |
 | `ELEVENLABS_API_KEY` / `ELEVENLABS_VOICE` | Reply voice (`POST /api/voice/tts`) | voice off |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Google OAuth client (Calendar + Gmail connection) — needs `PUBLIC_BASE_URL`; redirect URI is `{PUBLIC_BASE_URL}/api/connect/google/callback` | sample data |
+| `DUFFEL_API_KEY` | Live flight inventory + real orders (Duffel test keys work) | sample inventory |
+| `LITHIC_API_KEY` (+ `LITHIC_BASE_URL`) | Real single-use cards via Lithic | simulated cards |
 | `TEMPORAL_ADDRESS` / `TEMPORAL_NAMESPACE` / `TEMPORAL_TASK_QUEUE` | Temporal connection | `localhost:7233` / `default` / `opa-agent` |
+
+### Connect Google (real calendar + inbox)
+
+1. In Google Cloud Console create an OAuth client (Web type) with redirect URI `{PUBLIC_BASE_URL}/api/connect/google/callback`. Enable the Calendar and Gmail APIs.
+2. Set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `PUBLIC_BASE_URL`, restart.
+3. Each user clicks **Connect** under Settings → Connections. Their refresh token is encrypted in the same vault as BYOK keys; scopes appear on the connection row.
+
+After connecting, `get_calendar`/`read_inbox` mirror live data into the store (deduped per `provider_ref`), `create_calendar_hold` writes a real Calendar event, and `draft_email`/`send_email` run through Gmail drafts — still under the normal approval tiers and taint escalation.
 
 ### Connect SMS
 

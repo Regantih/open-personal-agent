@@ -25,6 +25,7 @@ export interface AgentEvent {
     | "execution"
     | "memory"
     | "kill_switch"
+    | "provider"
     | "error";
   summary: string;
   data: Record<string, unknown> | null;
@@ -54,6 +55,7 @@ export interface CalendarItem {
   end: number;
   kind: "event" | "hold";
   location: string | null;
+  providerRef?: string | null;
 }
 
 export interface InboxEmail {
@@ -63,6 +65,7 @@ export interface InboxEmail {
   body: string;
   receivedAt: number;
   read: boolean;
+  providerRef?: string | null;
 }
 
 export interface Approval {
@@ -146,6 +149,15 @@ export interface Outbox {
   body: string;
   status: "draft" | "sent";
   createdAt: number;
+  providerRef?: string | null;
+}
+
+// A connected third-party account (OAuth) — metadata only, secrets never leave the server.
+export interface ProviderConnectionInfo {
+  provider: string;
+  accountLabel: string | null;
+  scopes: string[];
+  connectedAt: number;
 }
 
 export interface Settings {
@@ -167,6 +179,9 @@ export interface Settings {
   agentEmail: string | null;
   boundChannels: { channel: string; address: string; verifiedAt: number }[];
   keyProviders: string[];
+  connections: ProviderConnectionInfo[];
+  oauthProviders: string[];
+  providerStatus: { calendar: string; inbox: string; flights: string; cards: string };
   usageToday: { turns: number; inputTokens: number; outputTokens: number };
   freeTierRemaining: number | null;
   freeTierLimit: number | null;

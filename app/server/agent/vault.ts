@@ -67,8 +67,25 @@ export function verifyMandate(m: Mandate, a: Approval, secret: string): { ok: bo
   return { ok: true };
 }
 
-// Simulated single-use virtual card scoped to one merchant and amount. The model only ever sees the reference and last four digits.
-export function issueSingleUseCard(merchant: string, amountUsd: number) {
+// Single-use virtual card scoped to one merchant and amount. The model only
+// ever sees the reference and last four digits. LITHIC_API_KEY issues a real
+// card via the Lithic API (sandbox keys run the same code path); otherwise a
+// clearly-labeled simulated card.
+export interface IssuedCard { ref: string; last4: string; merchant: string; capUsd: number; provider: string }
+export async function issueSingleUseCard(merchant: string, amountUsd: number): Promise<IssuedCard> {
+  if (process.env.LITHIC_API_KEY) return lithicCard(merchant, amountUsd);
   const last4 = String(Math.floor(1000 + Math.random() * 9000));
-  return { ref: "vault://card/" + randomBytes(6).toString("hex"), last4, merchant, capUsd: amountUsd };
+  return { ref: "vault://card/" + randomBytes(6).toString("hex"), last4, merchant, capUsd: amountUsd, provider: "simulated" };
+}
+
+async function lithicCard(merchant: string, amountUsd: number): Promise<IssuedCard> {
+  const base = process.env.LITHIC_BASE_URL || "https://api.lithic.com";
+  const resp = await fetch(`${base}/v1/cards`, {
+    method: "POST",
+    headers: { Authorization: `api-key ${process.env.LITHIC_API_KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ type: "SINGLE_USE", spend_limit: Math.round(amountUsd * 100), spend_limit_duration: "TRANSACTION", memo: `OPA: ${merchant}`.slice(0, 200), state: "OPEN" }),
+  });
+  const data: any = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw new Error(`Lithic card issue failed ${resp.status}: ${data?.message ?? "request failed"}`);
+  return { ref: `lithic://card/${data.token}`, last4: String(data.last_four ?? "????"), merchant, capUsd: amountUsd, provider: "lithic" };
 }

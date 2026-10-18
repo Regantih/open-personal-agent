@@ -42,14 +42,14 @@ CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY AUTOINCREMENT, user_
 CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL DEFAULT 'local', ts INTEGER, type TEXT, summary TEXT, data TEXT);
 CREATE TABLE IF NOT EXISTS facts (id TEXT PRIMARY KEY, user_id TEXT NOT NULL DEFAULT 'local', category TEXT, key TEXT, statement TEXT, source_type TEXT, channel TEXT, reference TEXT,
   confidence REAL, scope TEXT, sensitivity TEXT, created_at INTEGER, expires_at INTEGER, supersedes TEXT, active INTEGER);
-CREATE TABLE IF NOT EXISTS calendar (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL DEFAULT 'local', title TEXT, start INTEGER, "end" INTEGER, kind TEXT, location TEXT);
-CREATE TABLE IF NOT EXISTS inbox (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL DEFAULT 'local', sender TEXT, subject TEXT, body TEXT, received_at INTEGER, read INTEGER);
+CREATE TABLE IF NOT EXISTS calendar (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL DEFAULT 'local', title TEXT, start INTEGER, "end" INTEGER, kind TEXT, location TEXT, provider_ref TEXT);
+CREATE TABLE IF NOT EXISTS inbox (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL DEFAULT 'local', sender TEXT, subject TEXT, body TEXT, received_at INTEGER, read INTEGER, provider_ref TEXT);
 CREATE TABLE IF NOT EXISTS approvals (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL DEFAULT 'local', code TEXT, tool TEXT, action TEXT, tier TEXT, base_tier TEXT, escalated INTEGER,
   summary TEXT, params TEXT, amount_usd REAL, merchant TEXT, refundable INTEGER, status TEXT, mandate TEXT, created_at INTEGER, expires_at INTEGER, result TEXT, allow_category INTEGER);
 CREATE TABLE IF NOT EXISTS bookings (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL DEFAULT 'local', kind TEXT, merchant TEXT, description TEXT, amount_usd REAL, status TEXT,
   card_ref TEXT, card_last4 TEXT, commission_usd REAL, created_at INTEGER);
 CREATE TABLE IF NOT EXISTS subscriptions (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL DEFAULT 'local', merchant TEXT, monthly_usd REAL, last_used_days INTEGER, status TEXT);
-CREATE TABLE IF NOT EXISTS outbox (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL DEFAULT 'local', recipient TEXT, subject TEXT, body TEXT, status TEXT, created_at INTEGER);
+CREATE TABLE IF NOT EXISTS outbox (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL DEFAULT 'local', recipient TEXT, subject TEXT, body TEXT, status TEXT, created_at INTEGER, provider_ref TEXT);
 CREATE TABLE IF NOT EXISTS settings (user_id TEXT NOT NULL DEFAULT 'local', key TEXT NOT NULL, value TEXT, PRIMARY KEY (user_id, key));
 CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, email TEXT UNIQUE, phone TEXT UNIQUE, name TEXT, agent_token TEXT UNIQUE, created_at INTEGER);
 CREATE TABLE IF NOT EXISTS sessions (token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL, created_at INTEGER, expires_at INTEGER);
@@ -57,13 +57,14 @@ CREATE TABLE IF NOT EXISTS auth_tokens (token_hash TEXT PRIMARY KEY, kind TEXT N
 CREATE TABLE IF NOT EXISTS channel_bindings (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL, channel TEXT NOT NULL, address TEXT NOT NULL, verified_at INTEGER, UNIQUE(channel, address));
 CREATE TABLE IF NOT EXISTS user_keys (user_id TEXT NOT NULL, provider TEXT NOT NULL, ciphertext TEXT NOT NULL, iv TEXT NOT NULL, tag TEXT NOT NULL, created_at INTEGER, PRIMARY KEY (user_id, provider));
 CREATE TABLE IF NOT EXISTS usage (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL, ts INTEGER, lane TEXT, model TEXT, input_tokens INTEGER, output_tokens INTEGER);
+CREATE TABLE IF NOT EXISTS provider_connections (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL, provider TEXT NOT NULL, account_label TEXT, scopes TEXT, connected_at INTEGER, UNIQUE(user_id, provider));
 `;
 
 const PG_DDL = SQLITE_DDL
   .replaceAll("INTEGER PRIMARY KEY AUTOINCREMENT", "BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY")
   .replaceAll("REAL", "DOUBLE PRECISION")
   // epoch-millis columns must be 64-bit
-  .replaceAll(/\b(created_at|expires_at|received_at|verified_at|start|ts|last_used_days) INTEGER\b/g, "$1 BIGINT")
+  .replaceAll(/\b(created_at|expires_at|received_at|verified_at|connected_at|start|ts|last_used_days) INTEGER\b/g, "$1 BIGINT")
   .replaceAll('"end" INTEGER', '"end" BIGINT');
 
 function sqliteDriver(path: string): Driver & { raw: Database.Database } {
@@ -86,6 +87,13 @@ function sqliteDriver(path: string): Driver & { raw: Database.Database } {
           DROP TABLE settings; ALTER TABLE settings_new RENAME TO settings;`);
       }
       try { db.exec("ALTER TABLE messages ADD COLUMN trace TEXT"); } catch { /* column exists */ }
+      for (const t of ["calendar", "inbox", "outbox"]) {
+        try { db.exec(`ALTER TABLE ${t} ADD COLUMN provider_ref TEXT`); } catch { /* column exists */ }
+      }
+      // Dedupe keys for remote-provider mirrors (NULLs never conflict).
+      for (const t of ["calendar", "inbox", "outbox"]) {
+        db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS ${t}_provider_ref ON ${t}(user_id, provider_ref)`);
+      }
       // Legacy calendar tables may have an unquoted "end" column already — fine.
     },
     async run(sql, params) { return { changes: db.prepare(sql).run(...params as any).changes }; },
@@ -118,6 +126,10 @@ function pgDriver(url: string): Driver {
         // Idempotent column migrations for databases created before a column
         // existed (mirrors the sqlite path's ALTERs above).
         await q("ALTER TABLE messages ADD COLUMN IF NOT EXISTS trace TEXT", []);
+        for (const t of ["calendar", "inbox", "outbox"]) {
+          await q(`ALTER TABLE ${t} ADD COLUMN IF NOT EXISTS provider_ref TEXT`, []);
+          await q(`CREATE UNIQUE INDEX IF NOT EXISTS ${t}_provider_ref ON ${t}(user_id, provider_ref)`, []);
+        }
       })();
       return ready;
     },
@@ -163,11 +175,13 @@ export interface Store {
   forgetFact(id: string): Promise<boolean>;
   deleteAllFacts(): Promise<void>;
   listCalendar(from?: number, to?: number): Promise<CalendarItem[]>;
-  addCalendar(title: string, start: number, end: number, kind: "event" | "hold", location?: string | null): Promise<CalendarItem>;
+  addCalendar(title: string, start: number, end: number, kind: "event" | "hold", location?: string | null, providerRef?: string | null): Promise<CalendarItem>;
+  mirrorCalendar(items: { title: string; start: number; end: number; kind: "event" | "hold"; location?: string | null; providerRef: string }[]): Promise<number>;
   listInbox(): Promise<InboxEmail[]>;
   markRead(id: number): Promise<void>;
-  addInboundEmail(sender: string, subject: string, body: string): Promise<InboxEmail>;
-  addOutbox(recipient: string, subject: string, body: string, status: Outbox["status"]): Promise<Outbox>;
+  addInboundEmail(sender: string, subject: string, body: string, opts?: { receivedAt?: number; providerRef?: string | null }): Promise<InboxEmail>;
+  mirrorInbox(items: { sender: string; subject: string; body: string; receivedAt: number; providerRef: string }[]): Promise<number>;
+  addOutbox(recipient: string, subject: string, body: string, status: Outbox["status"], providerRef?: string | null): Promise<Outbox>;
   getOutbox(id: number): Promise<Outbox | undefined>;
   setOutboxStatus(id: number, status: Outbox["status"]): Promise<void>;
   listOutbox(): Promise<Outbox[]>;
@@ -273,38 +287,56 @@ export function storeFor(userId: string): Store {
     // ----- calendar -----
     async listCalendar(from = 0, to = 8.64e15) {
       return (await drv.all<any>(`SELECT * FROM calendar WHERE user_id = ? AND "end" >= ? AND start <= ? ORDER BY start ASC`, [u, from, to]))
-        .map((c) => ({ id: Number(c.id), title: c.title, start: Number(c.start), end: Number(c.end), kind: c.kind, location: c.location }));
+        .map((c) => ({ id: Number(c.id), title: c.title, start: Number(c.start), end: Number(c.end), kind: c.kind, location: c.location, providerRef: c.provider_ref ?? null }));
     },
-    async addCalendar(title, start, end, kind, location = null) {
-      const id = await drv.insert(`INSERT INTO calendar (user_id, title, start, "end", kind, location) VALUES (?, ?, ?, ?, ?, ?)`, [u, title, start, end, kind, location]);
-      return { id, title, start, end, kind, location };
+    async addCalendar(title, start, end, kind, location = null, providerRef = null) {
+      const id = await drv.insert(`INSERT INTO calendar (user_id, title, start, "end", kind, location, provider_ref) VALUES (?, ?, ?, ?, ?, ?, ?)`, [u, title, start, end, kind, location, providerRef]);
+      return { id, title, start, end, kind, location, providerRef };
+    },
+    // Mirror remote provider events into local state. Dedupes on provider_ref.
+    async mirrorCalendar(items) {
+      let added = 0;
+      for (const c of items) {
+        added += (await drv.run(`INSERT INTO calendar (user_id, title, start, "end", kind, location, provider_ref) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(user_id, provider_ref) DO NOTHING`,
+          [u, c.title, c.start, c.end, c.kind, c.location ?? null, c.providerRef])).changes;
+      }
+      return added;
     },
 
     // ----- inbox / outbox -----
     async listInbox() {
       return (await drv.all<any>("SELECT * FROM inbox WHERE user_id = ? ORDER BY received_at DESC", [u])).map((e) => ({
-        id: Number(e.id), sender: e.sender, subject: e.subject, body: e.body, receivedAt: Number(e.received_at), read: !!e.read,
+        id: Number(e.id), sender: e.sender, subject: e.subject, body: e.body, receivedAt: Number(e.received_at), read: !!e.read, providerRef: e.provider_ref ?? null,
       }));
     },
     async markRead(id) { await drv.run("UPDATE inbox SET read = 1 WHERE user_id = ? AND id = ?", [u, id]); },
-    async addInboundEmail(sender, subject, body) {
-      const receivedAt = Date.now();
-      const id = await drv.insert("INSERT INTO inbox (user_id, sender, subject, body, received_at, read) VALUES (?, ?, ?, ?, ?, 0)", [u, sender, subject, body, receivedAt]);
-      return { id, sender, subject, body, receivedAt, read: false };
+    async addInboundEmail(sender, subject, body, opts = {}) {
+      const receivedAt = opts.receivedAt ?? Date.now();
+      const providerRef = opts.providerRef ?? null;
+      const id = await drv.insert("INSERT INTO inbox (user_id, sender, subject, body, received_at, read, provider_ref) VALUES (?, ?, ?, ?, ?, 0, ?)", [u, sender, subject, body, receivedAt, providerRef]);
+      return { id, sender, subject, body, receivedAt, read: false, providerRef };
     },
-    async addOutbox(recipient, subject, body, status) {
+    async mirrorInbox(items) {
+      let added = 0;
+      for (const m of items) {
+        added += (await drv.run("INSERT INTO inbox (user_id, sender, subject, body, received_at, read, provider_ref) VALUES (?, ?, ?, ?, ?, 0, ?) ON CONFLICT(user_id, provider_ref) DO NOTHING",
+          [u, m.sender, m.subject, m.body, m.receivedAt, m.providerRef])).changes;
+      }
+      return added;
+    },
+    async addOutbox(recipient, subject, body, status, providerRef = null) {
       const createdAt = Date.now();
-      const id = await drv.insert("INSERT INTO outbox (user_id, recipient, subject, body, status, created_at) VALUES (?, ?, ?, ?, ?, ?)", [u, recipient, subject, body, status, createdAt]);
-      return { id, recipient, subject, body, status, createdAt };
+      const id = await drv.insert("INSERT INTO outbox (user_id, recipient, subject, body, status, created_at, provider_ref) VALUES (?, ?, ?, ?, ?, ?, ?)", [u, recipient, subject, body, status, createdAt, providerRef]);
+      return { id, recipient, subject, body, status, createdAt, providerRef };
     },
     async getOutbox(id) {
       const o = await drv.get<any>("SELECT * FROM outbox WHERE user_id = ? AND id = ?", [u, id]);
-      return o ? { id: Number(o.id), recipient: o.recipient, subject: o.subject, body: o.body, status: o.status, createdAt: Number(o.created_at) } : undefined;
+      return o ? { id: Number(o.id), recipient: o.recipient, subject: o.subject, body: o.body, status: o.status, createdAt: Number(o.created_at), providerRef: o.provider_ref ?? null } : undefined;
     },
     async setOutboxStatus(id, status) { await drv.run("UPDATE outbox SET status = ? WHERE user_id = ? AND id = ?", [status, u, id]); },
     async listOutbox() {
       return (await drv.all<any>("SELECT * FROM outbox WHERE user_id = ? ORDER BY id DESC", [u])).map((o) => ({
-        id: Number(o.id), recipient: o.recipient, subject: o.subject, body: o.body, status: o.status, createdAt: Number(o.created_at),
+        id: Number(o.id), recipient: o.recipient, subject: o.subject, body: o.body, status: o.status, createdAt: Number(o.created_at), providerRef: o.provider_ref ?? null,
       }));
     },
 
@@ -568,4 +600,29 @@ export async function deleteUserKey(userId: string, provider: string) {
 export async function listUserKeyProviders(userId: string): Promise<string[]> {
   await initDb();
   return (await drv.all<any>("SELECT provider FROM user_keys WHERE user_id = ?", [userId])).map((r) => r.provider);
+}
+
+// ----- provider connections (OAuth accounts: google, ... ) -----
+// Metadata for the Connections panel; secrets live in user_keys via keys.ts.
+export interface ProviderConnection { provider: string; accountLabel: string | null; scopes: string[]; connectedAt: number }
+export async function saveProviderConnection(userId: string, provider: string, accountLabel: string | null, scopes: string[]) {
+  await initDb();
+  await drv.run(
+    "INSERT INTO provider_connections (user_id, provider, account_label, scopes, connected_at) VALUES (?, ?, ?, ?, ?) " +
+    "ON CONFLICT(user_id, provider) DO UPDATE SET account_label = excluded.account_label, scopes = excluded.scopes, connected_at = excluded.connected_at",
+    [userId, provider, accountLabel, scopes.join(" "), Date.now()]);
+}
+export async function getProviderConnection(userId: string, provider: string): Promise<ProviderConnection | undefined> {
+  await initDb();
+  const r = await drv.get<any>("SELECT provider, account_label, scopes, connected_at FROM provider_connections WHERE user_id = ? AND provider = ?", [userId, provider]);
+  return r ? { provider: r.provider, accountLabel: r.account_label ?? null, scopes: String(r.scopes ?? "").split(" ").filter(Boolean), connectedAt: Number(r.connected_at) } : undefined;
+}
+export async function listProviderConnections(userId: string): Promise<ProviderConnection[]> {
+  await initDb();
+  return (await drv.all<any>("SELECT provider, account_label, scopes, connected_at FROM provider_connections WHERE user_id = ? ORDER BY provider", [userId]))
+    .map((r) => ({ provider: r.provider, accountLabel: r.account_label ?? null, scopes: String(r.scopes ?? "").split(" ").filter(Boolean), connectedAt: Number(r.connected_at) }));
+}
+export async function deleteProviderConnection(userId: string, provider: string): Promise<boolean> {
+  await initDb();
+  return (await drv.run("DELETE FROM provider_connections WHERE user_id = ? AND provider = ?", [userId, provider])).changes > 0;
 }

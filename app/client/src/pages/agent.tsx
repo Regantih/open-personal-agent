@@ -11,7 +11,7 @@ import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import {
-  ArrowUp, Bell, Brain, Check, CircleAlert, Cpu, Download, ExternalLink, KeyRound, MessageSquare, Mic, MicOff, OctagonX, Play, RotateCcw,
+  ArrowUp, Bell, Brain, Check, CircleAlert, Cpu, Download, ExternalLink, KeyRound, Link2, MessageSquare, Mic, MicOff, OctagonX, Play, RotateCcw,
   ShieldCheck, Sparkles, Trash2, Upload, Volume2, Wrench, X, CalendarDays, Mail, CreditCard, Plane, Send, Radio,
 } from "lucide-react";
 
@@ -269,6 +269,7 @@ const eventIcon: Record<AgentEvent["type"], JSX.Element> = {
   model_call: <Cpu className="h-3.5 w-3.5" />, tool_call: <Wrench className="h-3.5 w-3.5" />, policy: <ShieldCheck className="h-3.5 w-3.5" />,
   approval: <KeyRound className="h-3.5 w-3.5" />, execution: <Check className="h-3.5 w-3.5" />, memory: <Brain className="h-3.5 w-3.5" />,
   kill_switch: <OctagonX className="h-3.5 w-3.5" />, error: <CircleAlert className="h-3.5 w-3.5" />,
+  provider: <Link2 className="h-3.5 w-3.5" />,
 };
 const eventTone: Partial<Record<AgentEvent["type"], string>> = {
   policy: "text-primary", approval: "text-[hsl(36_80%_34%)]", execution: "text-primary", kill_switch: "text-destructive", error: "text-destructive", model_call: "text-[hsl(222_40%_40%)]",
@@ -279,6 +280,7 @@ const FILTERS: { id: string; label: string; types: AgentEvent["type"][] | null }
   { id: "models", label: "Models", types: ["model_call"] },
   { id: "tools", label: "Tools", types: ["tool_call", "error"] },
   { id: "memory", label: "Memory", types: ["memory"] },
+  { id: "providers", label: "Providers", types: ["provider"] },
 ];
 
 function ActivityTab({ events }: { events: AgentEvent[] }) {
@@ -716,6 +718,11 @@ function AccountSection({ s }: { s: Settings }) {
     mutationFn: async (p: string) => apiRequest("DELETE", `/api/keys/${p}`),
     onSuccess: invalidate,
   });
+  const disconnectGoogle = useMutation({
+    mutationFn: async () => apiRequest("POST", "/api/connect/google/disconnect"),
+    onSuccess: () => { invalidate(); toast({ title: "Google disconnected" }); },
+    onError: (e: Error) => toast({ title: "Disconnect failed", description: e.message.replace(/^\d+: /, ""), variant: "destructive" }),
+  });
   const logout = useMutation({
     mutationFn: async () => apiRequest("POST", "/api/auth/logout"),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/auth/session"] }),
@@ -768,6 +775,43 @@ function AccountSection({ s }: { s: Settings }) {
             <Button size="sm" className="h-8" onClick={() => bindVerify.mutate()} disabled={!bindCode.trim() || bindVerify.isPending} data-testid="button-bind-verify">Verify</Button>
             {bindDev && <span className="self-center font-mono text-[11px] text-muted-foreground [overflow-wrap:anywhere]" data-testid="text-bind-dev">{bindDev.startsWith("http") ? "link emailed (check inbox)" : `dev: ${bindDev}`}</span>}
           </div>
+        )}
+      </div>
+
+      <div className="rounded-lg border bg-card p-3">
+        <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground"><Link2 className="h-3.5 w-3.5" /> Connections</div>
+        <p className="mt-1 text-xs text-muted-foreground">Connect real accounts — the agent reads and acts through them instead of the built-in sample data.</p>
+        <ul className="mt-2 space-y-1.5">
+          {(() => {
+            const g = s.connections?.find((c) => c.provider === "google");
+            return (
+              <li className="flex items-center gap-2 text-xs" data-testid="row-connection-google">
+                <Badge variant="outline">Google</Badge>
+                <span className="text-muted-foreground">Calendar · Gmail</span>
+                {g ? (
+                  <>
+                    <span className="font-medium" data-testid="text-google-account">{g.accountLabel ?? "connected"}</span>
+                    <Button size="sm" variant="ghost" className="ml-auto h-6 px-2 text-xs" onClick={() => disconnectGoogle.mutate()} disabled={disconnectGoogle.isPending} data-testid="button-disconnect-google">Disconnect</Button>
+                  </>
+                ) : s.oauthProviders?.includes("google") ? (
+                  <a href="/api/connect/google" className="ml-auto" data-testid="button-connect-google"><Button size="sm" variant="outline" className="h-6 px-2 text-xs">Connect</Button></a>
+                ) : (
+                  <span className="ml-auto text-muted-foreground" data-testid="text-google-unconfigured">not configured</span>
+                )}
+              </li>
+            );
+          })()}
+          <li className="flex items-center gap-2 text-xs" data-testid="row-provider-flights">
+            <Badge variant="outline">Flights</Badge>
+            <span className="text-muted-foreground">{s.providerStatus?.flights === "duffel" ? "Duffel — live inventory" : "sample inventory"}</span>
+          </li>
+          <li className="flex items-center gap-2 text-xs" data-testid="row-provider-cards">
+            <Badge variant="outline">Cards</Badge>
+            <span className="text-muted-foreground">{s.providerStatus?.cards === "lithic" ? "Lithic — real single-use cards" : "simulated single-use cards"}</span>
+          </li>
+        </ul>
+        {(s.providerStatus?.calendar === "google-calendar" || s.providerStatus?.inbox === "gmail") && (
+          <p className="mt-2 text-xs text-primary" data-testid="text-live-providers">Live: calendar → {s.providerStatus.calendar}, inbox → {s.providerStatus.inbox}</p>
         )}
       </div>
 
@@ -878,6 +922,17 @@ export default function AgentPage() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/state"] }),
   });
   const pendingCount = useMemo(() => state?.approvals.filter((a) => a.status === "pending").length ?? 0, [state]);
+
+  // OAuth redirect landing: ?connected=google / ?connect_error=...
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search);
+    const connected = q.get("connected");
+    const connectError = q.get("connect_error");
+    if (!connected && !connectError) return;
+    if (connected) toast({ title: `${connected} connected — live data now flows into your agent` });
+    else toast({ title: "Connection failed", description: connectError ?? undefined, variant: "destructive" });
+    window.history.replaceState({}, "", window.location.pathname);
+  }, [toast]);
 
   return (
     <div className="flex h-[100dvh] flex-col bg-background text-foreground">

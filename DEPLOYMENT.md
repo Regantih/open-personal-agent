@@ -79,16 +79,45 @@ Override via shell env or an `app/.env` file.
 - Untrusted senders land in the recipient's inbox as tainted content — they
   never execute commands.
 
-## 5. Required environment
+## 5. Provider connections
+
+Every provider is optional; missing ones fall back to clearly-labeled sample data.
+
+### Google (real Calendar + Gmail per user)
+
+1. Google Cloud Console → create a project, enable **Google Calendar API** and **Gmail API**.
+2. OAuth consent screen → External → add scopes: `calendar.events`, `gmail.readonly`, `gmail.compose`, `gmail.send`, `openid`, `email`. (Unverified apps show a warning screen users can click through; publish the app for the general public.)
+3. Credentials → OAuth client ID (Web) → authorized redirect URI:
+   `https://your-domain/api/connect/google/callback`.
+4. `fly secrets set GOOGLE_CLIENT_ID=... GOOGLE_CLIENT_SECRET=...` (`PUBLIC_BASE_URL` already set).
+5. Users connect under **Settings → Connections**. Refresh tokens are encrypted with `MASTER_KEY` in `user_keys`; revoking access at myaccount.google.com or **Disconnect** cleans up.
+
+### Duffel (live flights) — `DUFFEL_API_KEY`
+
+Test tokens (`duffel_test_*`) run identical code against sandbox inventory.
+Live orders additionally need per-user settings `passenger_given_name`,
+`passenger_family_name`, `passenger_born_on` (orders are rejected with a clear
+message if unset) and a funded Duffel Balance for `type: "balance"` payments.
+
+### Lithic (real single-use cards) — `LITHIC_API_KEY`
+
+Sandbox keys work end-to-end. `LITHIC_BASE_URL` overrides the API host.
+Cards are issued `SINGLE_USE` with `spend_limit = approved amount` — the model
+never sees a PAN, only the token ref + last4.
+
+## 6. Required environment
 
 | Var | Purpose |
 | --- | --- |
 | `ANTHROPIC_API_KEY` | Platform model key (users can add their own via BYOK) |
 | `MASTER_KEY` | AES-256 key-encryption key + auth-token signer (`openssl rand -hex 32`) |
-| `PUBLIC_BASE_URL` | External URL — magic links, Twilio signature checks |
+| `PUBLIC_BASE_URL` | External URL — magic links, Twilio signature checks, OAuth redirect |
 | `DATABASE_URL` | Postgres; omit for SQLite |
 | `OPA_MULTI_USER=1` | Enable accounts/channels/BYOK (omit for single-user) |
 | `TWILIO_*`, `EMAIL_*`, `MAILGUN_*`, `RESEND_API_KEY`/`SMTP_URL` | Channels |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Per-user Google Calendar + Gmail |
+| `DUFFEL_API_KEY`, `LITHIC_API_KEY` | Live flights, real cards |
+| `ELEVENLABS_API_KEY` (+ `ELEVENLABS_VOICE`) | Server-side TTS for spoken replies |
 
 Rate limits: `/api/auth/*` → 20 req/10 min per IP; `/api/messages` + channel
 webhooks → 30 req/min per IP. Security headers (CSP, HSTS, nosniff,
