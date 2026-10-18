@@ -96,7 +96,8 @@ app.use((req, res, next) => {
     {
       port,
       host: "0.0.0.0",
-      reusePort: true,
+      // reusePort is Linux-only; Windows throws ENOTSUP.
+      ...(process.platform === "linux" ? { reusePort: true } : {}),
     },
     () => {
       log(`serving on port ${port}`);
