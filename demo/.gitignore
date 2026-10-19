@@ -16,3 +16,5 @@ serve*.log
 f*-*.png
 dbg*
 build*/
+shots/consola.ttf
+shots/v*.png
