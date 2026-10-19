@@ -736,8 +736,9 @@ function SignIn() {
             </Button>
             {stage === "sent" && (
               <p className="text-xs text-muted-foreground">
-                Link sent — it expires in 15 minutes.
-                {devLink && <a href={devLink} className="mt-1 block font-medium text-primary underline [overflow-wrap:anywhere]" data-testid="link-dev-magic">Dev shortcut: click to sign in</a>}
+                {devLink ? (
+                  <>Tap to sign in — your link is ready (expires in 15 minutes): <a href={devLink} className="mt-1 block font-medium text-primary underline [overflow-wrap:anywhere]" data-testid="link-dev-magic">Sign in to Asta</a></>
+                ) : "Link sent — it expires in 15 minutes. Check your inbox."}
               </p>
             )}
           </div>
@@ -754,7 +755,7 @@ function SignIn() {
                 <Button className="w-full" onClick={() => otpVerify.mutate()} disabled={code.length !== 6 || otpVerify.isPending} data-testid="button-verify-code">
                   {otpVerify.isPending ? "Checking…" : "Sign in"}
                 </Button>
-                <p className="text-xs text-muted-foreground">Code sent — it expires in 15 minutes.{devCode && <span className="mt-1 block font-mono" data-testid="text-dev-code">Dev code: {devCode}</span>}</p>
+                <p className="text-xs text-muted-foreground">{devCode ? <>Your code: <span className="font-mono font-medium text-foreground" data-testid="text-dev-code">{devCode}</span> (expires in 15 minutes)</> : "Code sent — it expires in 15 minutes."}</p>
               </>
             )}
           </div>
