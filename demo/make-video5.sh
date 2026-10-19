@@ -117,6 +117,6 @@ MIX="$(for i in $(seq 0 $((NCOUNT - 1))); do echo -n "[a$i]"; done)amix=inputs=$
 "$FFMPEG" -y -v error $IN -filter_complex "$FC$MIX" -map "[aout]" -c:a libmp3lame -q:a 4 "$OUT/narration.mp3"
 "$FFPROBE" -v error -show_entries format=duration -of csv=p=0 "$OUT/narration.mp3" | xargs echo "narration duration:"
 
-"$FFMPEG" -y -v error -i "$OUT/video-only.mp4" -i "$OUT/narration.mp3" -c:v copy -c:a aac -b:a 160k demo-v5.mp4
+"$FFMPEG" -y -v error -i "$OUT/video-only.mp4" -i "$OUT/narration.mp3" -c:v copy -c:a aac -b:a 160k -movflags +faststart demo-v5.mp4
 "$FFPROBE" -v error -show_entries format=duration,size -of csv=p=0 demo-v5.mp4 | xargs echo "final:"
 echo "done -> demo-v5.mp4"

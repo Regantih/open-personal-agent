@@ -1326,4 +1326,82 @@ export const tasks: EvalTask[] = [
       } },
     ],
   },
+  {
+    id: "a06", name: "Anticipation: a sent email with no reply in 48h gets a nudge button", category: "anticipation",
+    script: [
+      { run: async (h) => {
+        const { anticipate } = await import("../server/agent/anticipate");
+        const quiet = await h.db.findOrCreateUser({ email: "quiet@example.com" });
+        const s = h.db.storeFor(quiet.id);
+        const o = await s.addOutbox("contractor@buildco.example", "Porch repair quote?", "Are you still able to start next week?", "sent");
+        // backdate the send to 3 days ago
+        await h.db.drv.run("UPDATE outbox SET created_at = ? WHERE id = ?", [Date.now() - 3 * 86400000, o.id]);
+        const out = await anticipate(s);
+        const nudge = out.find((a) => a.tag.startsWith("followup:"));
+        if (!nudge) throw new Error("no follow-up suggestion for unanswered email");
+        if (!nudge.prompt.includes("contractor@buildco.example")) throw new Error("nudge not bound to the thread");
+        if (/approve/i.test(nudge.prompt)) throw new Error("nudge prompt should draft, not send");
+      } },
+      { run: async (h) => {
+        // a reply from the recipient clears the nudge
+        const { anticipate } = await import("../server/agent/anticipate");
+        const quiet = await h.db.findOrCreateUser({ email: "quiet@example.com" });
+        const s = h.db.storeFor(quiet.id);
+        await s.addInboundEmail("contractor@buildco.example", "Re: Porch repair quote?", "yes");
+        const out = await anticipate(s);
+        if (out.some((a) => a.tag.startsWith("followup:"))) throw new Error("nudge survived a reply");
+      } },
+    ],
+  },
+  {
+    id: "m01", name: "Messaging: message_send to a contact is T2, approval sends it", category: "messaging",
+    script: [
+      ...turn("Email the contractor and nudge them", [
+        { tool: "message_send", input: { to: "contractor@buildco.example", channel: "email", subject: "Porch repair", body: "Following up on the quote — are you still able to start next week?" } },
+        { say: "It needs your approval." },
+      ]),
+      { expect: { approvalsPending: 1, approval: { action: "message.send_to_contact", tier: "T2" } } },
+      { decide_pending: "approve" },
+      { run: async (h) => {
+        const sent = await h.store.listOutbox();
+        const o = sent.find((o) => o.recipient === "contractor@buildco.example");
+        if (!o || o.status !== "sent") throw new Error("contact email not recorded as sent");
+      } },
+    ],
+  },
+  {
+    id: "m02", name: "Messaging: message_send rejects malformed destinations in prepare", category: "messaging",
+    script: [
+      ...turn("Text the contractor", [
+        { tool: "message_send", input: { to: "555-1234", channel: "sms", body: "any update?" } },
+        { say: "That number won't work." },
+      ]),
+      { expect: { approvalsPending: 0, tool: { name: "message_send", status: "error" } } },
+      ...turn("Email them instead", [
+        { tool: "message_send", input: { to: "not-an-email", channel: "email", body: "hi" } },
+        { say: "That's not an email address." },
+      ]),
+      { expect: { approvalsPending: 0, tool: { name: "message_send", status: "error" } } },
+    ],
+  },
+  {
+    id: "m03", name: "Messaging: proactive outbound texts the owner once, not twice", category: "messaging",
+    script: [
+      { run: async (h) => {
+        process.env.OWNER_PHONE = "+15551234567";
+        const { proactiveOutbound } = await import("../server/agent/agent");
+        const mark = (await h.store.listEvents(10000)).reduce((m, e) => Math.max(m, e.id), 0);
+        await proactiveOutbound(h.ctx, "Your flight to SFO is tomorrow — check-in is open.");
+        const events = await h.eventsSince(mark);
+        const smsEvents = events.filter((e) => e.type === "message_out" && /Proactive SMS/.test(e.summary));
+        if (!smsEvents.length) throw new Error("no proactive SMS sent for a meaningful digest");
+        await proactiveOutbound(h.ctx, "Still worth saying.");
+        const after = await h.eventsSince(mark);
+        if (after.filter((e) => e.type === "message_out" && /Proactive SMS/.test(e.summary)).length !== 1) throw new Error("proactive SMS not capped at one per window");
+        await proactiveOutbound(h.ctx, "Nothing needs your attention right now.");
+        const after2 = await h.eventsSince(mark);
+        if (after2.filter((e) => e.type === "message_out" && /Proactive SMS/.test(e.summary)).length !== 1) throw new Error("quiet digest still texted");
+      } },
+    ],
+  },
 ];

@@ -39,10 +39,12 @@ This is a reference implementation of the [playbook](../docs/). It is small on p
 | Voice | Browser Web Speech STT → normal turn pipeline → ElevenLabs TTS (`ELEVENLABS_API_KEY`); mic + speaker buttons in the composer |
 | Outbound calls | Simulated line (scripted transcript) — or **real calls** with `TWILIO_ACCOUNT_SID`/`TWILIO_AUTH_TOKEN`/`TWILIO_FROM_NUMBER`/`PUBLIC_BASE_URL`: T2-gated, opens with a spoken AI disclosure, hourly cap, transcript (never audio) in the Data tab, kill switch hangs up live calls. Two-way conversation needs a realtime voice key (`OPA_REALTIME_API_KEY` or `OPENAI_API_KEY`); without it a one-way disclosed announcement plays |
 | Panels | Custom dashboards declared in chat (`panel_create`/`panel_list`/`panel_delete`, T1/T0) — fixed widget types bound to real store data (calendar, inbox, subscriptions, bookings, calls, facts, approvals, usage, note), rendered in the Panels tab. No generated code; definitions are validated and capped |
-| Anticipation | Deterministic rules map state to follow-ups — a flight inside 3 days yields check-in + airport-run buttons, a reservation inside 2 days offers a confirmation call, pending approvals get a read-only review button. Buttons merge ahead of model suggestions, carry a "why", clear when stale, and run through the normal T0–T3 pipeline |
+| Anticipation | Deterministic rules map state to follow-ups — a flight inside 3 days yields check-in + airport-run buttons, a reservation inside 2 days offers a confirmation call, an outbound email with no reply in 48h gets a nudge button, pending approvals get a read-only review button. Buttons merge ahead of model suggestions, carry a "why", clear when stale, and run through the normal T0–T3 pipeline |
+| Messaging people | `message_send` (T2 `message.send_to_contact`) emails or texts anyone — chase a contractor, nudge a vendor, confirm a detail. Validated destinations, approval first, sent email lands in the outbox so the follow-up lane can track replies |
+| Proactive outreach | The batch lane also texts you — when the digest has something worth saying it goes to your bound phone (or `OWNER_PHONE`) via SMS, capped at one outbound per 4h. Twilio for real sends, simulated otherwise |
 | Storage | SQLite (default) or PostgreSQL via `DATABASE_URL` — same `Store` interface, verified against Postgres 16 |
 | Rate limits & headers | Fixed-window limiter on `/api/auth/*` and message/webhook routes; CSP/HSTS/security headers on every response (`server/security.ts`) |
-| Eval suite | 90 deterministic tasks (`npm run eval`) |
+| Eval suite | 94 deterministic tasks (`npm run eval`) |
 
 ## Run it
 
@@ -175,8 +177,8 @@ Each inbound turn, approval decision, and background check becomes a workflow (`
 ### Evals and channel tests
 
 ```bash
-npm run eval            # 90 deterministic tasks; no API key needed
-npm run eval -- e14     # run one task (e50–a05 cover channels, tenancy, browser, vault, calls, panels, anticipation)
+npm run eval            # 94 deterministic tasks; no API key needed
+npm run eval -- e14     # run one task (e50–m03 cover channels, tenancy, browser, vault, calls, panels, anticipation, messaging)
 npm run test:channels   # signed SMS/WhatsApp + voice + email webhooks against a live server
 ```
 

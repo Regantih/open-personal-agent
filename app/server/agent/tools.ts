@@ -4,6 +4,7 @@ import { sampleProvider, flightProvider, flightsLive, getOffer, duffelProvider }
 import { issueSingleUseCard } from "./vault";
 import { limits } from "./policy";
 import { emailSender } from "./email";
+import { smsSender } from "./sms";
 import * as browser from "./browser";
 import * as calls from "./calls";
 import * as credentials from "./credentials";
@@ -403,6 +404,42 @@ export const tools: ToolDef[] = [
       if (provider.end && c.providerRef) await provider.end(c.providerRef);
       await ctx.store.updateCall(c.id, { status: "ended_by_user", endedAt: Date.now() });
       return { ended: c.id };
+    },
+  },
+  {
+    name: "message_send",
+    description: "Send a short message to a person outside the assistant — a contact, a business, anyone — by email or SMS. Use it to chase people: nudge someone who hasn't replied, ask a vendor a question, confirm a detail. Always asks the user first (T2).",
+    input_schema: {
+      type: "object",
+      properties: {
+        to: { type: "string", description: "Email address or E.164 phone number, e.g. +14155550123" },
+        channel: { type: "string", enum: ["email", "sms"] },
+        body: { type: "string", description: "Message text, at most 480 characters" },
+        subject: { type: "string", description: "Subject line (email channel only)" },
+      },
+      required: ["to", "channel", "body"],
+    },
+    prepare: async (i) => {
+      const channel = String(i.channel);
+      const to = String(i.to ?? "").trim();
+      if (channel === "sms" && !/^\+[1-9]\d{7,14}$/.test(to)) throw new Error(`SMS needs an E.164 number, got "${to}"`);
+      if (channel === "email" && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to)) throw new Error(`Not a valid email address: "${to}"`);
+      if (channel !== "sms" && channel !== "email") throw new Error(`channel must be email or sms, got "${channel}"`);
+      return { action: "message.send_to_contact", summary: `Send ${channel} to ${to}: "${String(i.body ?? "").slice(0, 60)}"`, merchant: to };
+    },
+    async execute(i, ctx) {
+      const to = String(i.to).trim();
+      const body = String(i.body).slice(0, 480);
+      if (i.channel === "sms") {
+        const { delivery } = await smsSender().send(to, body);
+        await ctx.store.logEvent("message_out", `SMS to contact ${to}: ${body.slice(0, 80)}`, { channel: "sms", delivery });
+        return { sent: true, channel: "sms", to, delivery };
+      }
+      const subject = String(i.subject || "Note from your agent").slice(0, 120);
+      const { delivery } = await emailSender().send(to, subject, body);
+      await ctx.store.addOutbox(to, subject, body, "sent");
+      await ctx.store.logEvent("message_out", `Email to contact ${to}: "${subject}"`, { channel: "email", delivery });
+      return { sent: true, channel: "email", to, delivery };
     },
   },
   {

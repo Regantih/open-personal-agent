@@ -1,8 +1,9 @@
-import { storeFor, type Store } from "./db";
+import { storeFor, listBindings, type Store } from "./db";
 import { tools, toolByName, type ToolContext } from "./tools";
 import { evaluate, confirmationTtlMs, killPhrases, policy } from "./policy";
 import { revokeBrowserSessions } from "./browser";
 import { callProvider } from "./calls";
+import { smsSender } from "./sms";
 import { anticipate, type Anticipation } from "./anticipate";
 import { signMandate, verifyMandate } from "./vault";
 import { complete, providerName, type CallAuth, type CanonicalMessage, type ModelToolSchema } from "./llm";
@@ -323,7 +324,29 @@ export async function runBackground(ctx: Ctx): Promise<string> {
   await store.addMessage("agent", "proactive", text);
   await store.logEvent("message_out", "Proactive: " + text.slice(0, 140), { channel: "proactive" });
   await refreshActionButtons(ctx, { upcoming, unread, idle });
+  await proactiveOutbound(ctx, text);
   return text;
+}
+
+// Proactive outreach: if the batch lane found something worth saying, also
+// text it to the user's bound phone (or OWNER_PHONE in single-user). Fo-style
+// "the agent texts you first" — capped at one outbound SMS per 4 hours per
+// user so a chatty digest never becomes spam. Simulated sender when Twilio
+// isn't configured.
+export async function proactiveOutbound(ctx: Ctx, text: string): Promise<void> {
+  const store = ctx.store;
+  if (/nothing needs your attention/i.test(text)) return;
+  const to = (await listBindings(ctx.userId)).find((b) => b.channel === "sms")?.address || process.env.OWNER_PHONE;
+  if (!to) return;
+  const last = await store.getSetting("last_proactive_sms_at", 0);
+  if (Date.now() - last < 4 * 3600000) return;
+  try {
+    const { delivery } = await smsSender().send(to, `[OPA] ${text.slice(0, 300)}`);
+    await store.setSetting("last_proactive_sms_at", Date.now());
+    await store.logEvent("message_out", `Proactive SMS to ${to}`, { channel: "sms", delivery });
+  } catch (e: any) {
+    await store.logEvent("error", `Proactive SMS failed: ${e.message}`, { lane: "batch" });
+  }
 }
 
 async function anticipatedFollowups(store: Ctx["store"]): Promise<Anticipation[]> {

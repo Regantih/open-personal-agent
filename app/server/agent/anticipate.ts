@@ -25,11 +25,13 @@ export async function anticipate(store: Store): Promise<Anticipation[]> {
   const now = Date.now();
   const out: Anticipation[] = [];
 
-  const [events, bookings, pending, calls] = await Promise.all([
+  const [events, bookings, pending, calls, sent, inboxAll] = await Promise.all([
     store.listCalendar(now - 2 * HOUR, now + 7 * DAY),
     store.listBookings(),
     store.listApprovals(),
     store.listCalls(10),
+    store.listOutbox(),
+    store.listInbox(),
   ]);
 
   // Rule 1 — flight coming up: check-in window, seat, and the Hark signature:
@@ -95,5 +97,22 @@ export async function anticipate(store: Store): Promise<Anticipation[]> {
     });
   }
 
-  return out.slice(0, 4);
+  // Rule 6 — an outbound email with no reply in 48h: offer to chase them.
+  // The agent's follow-up lane — sent messages that went quiet get a nudge button.
+  const stale = sent
+    .filter((o) => o.status === "sent" && now - o.createdAt > 2 * DAY && now - o.createdAt < 14 * DAY)
+    .filter((o) => !inboxAll.some((m) => m.receivedAt > o.createdAt && m.sender.toLowerCase().includes(o.recipient.toLowerCase())))
+    .sort((a, b) => a.createdAt - b.createdAt);
+  if (stale.length) {
+    const o = stale[0];
+    const days = Math.floor((now - o.createdAt) / DAY);
+    out.push({
+      tag: `followup:${o.id}`,
+      label: `Nudge ${o.recipient.split("@")[0]}`,
+      prompt: `Draft a short, polite follow-up to my email "${o.subject}" to ${o.recipient} — no reply in ${days} days.`,
+      reason: `Your email to ${o.recipient} ("${o.subject}") has had no reply in ${days} days.`,
+    });
+  }
+
+  return out.slice(0, 5);
 }
