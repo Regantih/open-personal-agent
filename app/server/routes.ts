@@ -4,8 +4,9 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import {
   storeFor, DEFAULT_SUGGESTIONS, multiUser, ensureLocalUser, LOCAL_USER, initDb,
   listUserIds, getUserByAgentToken, parseAgentToken, agentAddressFor, findUserByChannel,
-  listBindings, listUserKeyProviders, getUser, listProviderConnections,
+  listBindings, listUserKeyProviders, getUser, listProviderConnections, listCalls, getCallById,
 } from "./agent/db";
+import { twimlForCall, applyCallStatus, realtimeConfigured, bridgeCallStream } from "./agent/calls";
 import { saveUserKey, deleteUserKey, freeTierRemaining, FREE_PLANNER_TURNS_PER_DAY } from "./agent/keys";
 import { models, ctxFor, type Ctx } from "./agent/agent";
 import { orchestrator, orchestratorName } from "./agent/orchestrator";
@@ -20,6 +21,7 @@ import { securityHeaders, rateLimit } from "./security";
 import { browserStatus, latestFrame, screenshot, forwardInput, closeBrowser } from "./agent/browser";
 import { saveCredential, listCredentials, deleteCredential } from "./agent/credentials";
 import { ttsConfigured, synthesize } from "./agent/voice";
+import { WebSocketServer } from "ws";
 import * as google from "./agent/providers/google";
 import { flightsLive } from "./agent/flights";
 import { sendMessageSchema, decideApprovalSchema, settingsUpdateSchema, type StateSnapshot } from "@shared/schema";
@@ -72,6 +74,7 @@ async function snapshot(ctx: Ctx): Promise<StateSnapshot> {
       freeTierRemaining: freeLeft,
       freeTierLimit: freeLeft === null ? null : FREE_PLANNER_TURNS_PER_DAY,
     },
+    calls: (await listCalls(ctx.userId)).map(({ userId, ...c }) => c),
     suggestions: await store.getSetting("action_suggestions", DEFAULT_SUGGESTIONS),
     policy: { version: policy.version, defaultTier: policy.default_tier ?? "T3", actions: policy.actions.map((a) => ({ match: a.match, tier: a.tier })) },
   };
@@ -197,6 +200,39 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       await store.logEvent("error", `Email channel failed: ${e.message}`, null);
       res.status(502).json({ message: e.message });
     }
+  });
+
+  // Voice channel (Twilio Programmable Voice). Twilio fetches TwiML here when
+  // the callee answers — the AI disclosure is always spoken first, then the
+  // audio bridges to the realtime voice model, or (no realtime key) a one-way
+  // disclosed announcement plays and hangs up.
+  const twimlHandler = async (req: Request, res: any) => {
+    if (!validTwilioSignature(req)) return res.status(403).send("invalid signature");
+    const callId = Number(req.query.callId ?? 0);
+    const call = callId ? await getCallById(callId) : undefined;
+    if (!call) return res.type("text/xml").send(`<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>`);
+    const user = await getUser(call.userId);
+    res.type("text/xml").send(twimlForCall({
+      callId, purpose: call.purpose, userLabel: user?.name || "the account owner",
+      baseUrl: (process.env.PUBLIC_BASE_URL || "").replace(/\/$/, ""),
+      realtime: realtimeConfigured(),
+    }));
+  };
+  app.post("/api/channels/voice", twimlHandler);
+  app.get("/api/channels/voice", twimlHandler);
+  app.post("/api/channels/voice/status", async (req, res) => {
+    if (!validTwilioSignature(req)) return res.status(403).send("invalid signature");
+    const sid = String(req.body?.CallSid || "");
+    if (sid) await applyCallStatus(sid, String(req.body?.CallStatus || ""));
+    res.sendStatus(204);
+  });
+
+  // Twilio Media Stream socket: carries the live call audio. Not signed —
+  // authenticated implicitly by the callId lookup inside bridgeCallStream.
+  const voiceWss = new WebSocketServer({ noServer: true });
+  httpServer.on("upgrade", (req, socket, head) => {
+    if (!(req.url ?? "").startsWith("/api/channels/voice/stream")) return; // other upgrades (vite HMR) pass through
+    voiceWss.handleUpgrade(req, socket, head, (ws) => { void bridgeCallStream(ws); });
   });
 
   // ---------- provider connections (OAuth) ----------

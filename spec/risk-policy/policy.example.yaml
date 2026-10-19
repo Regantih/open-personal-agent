@@ -70,6 +70,10 @@ actions:
   - match: "call.outbound.business"
     tier: T2
     requirements: [ai_disclosure, recording_consent_check]
+  - match: "call.read"
+    tier: T0
+  - match: "call.end"
+    tier: T1
 
 untrusted_origin:
   sources: [email_body, web_content, attachment, external_agent]
@@ -82,4 +86,4 @@ limits:
 
 kill_switch:
   phrases: ["stop everything", "pause all"]
-  actions: [pause_all_tasks, freeze_agent_cards, revoke_browser_sessions]
+  actions: [pause_all_tasks, freeze_agent_cards, revoke_browser_sessions, end_active_calls]

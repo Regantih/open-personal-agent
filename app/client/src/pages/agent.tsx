@@ -12,7 +12,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import {
   ArrowUp, Bell, Brain, Check, CircleAlert, Cpu, Download, ExternalLink, KeyRound, Link2, Lock, MessageSquare, Mic, MicOff, OctagonX, Play, RotateCcw,
-  ShieldCheck, Sparkles, Trash2, Upload, Volume2, Wrench, X, CalendarDays, Mail, CreditCard, Plane, Send, Radio,
+  ShieldCheck, Sparkles, Trash2, Upload, Volume2, Wrench, X, CalendarDays, Mail, CreditCard, Phone, Plane, Send, Radio,
 } from "lucide-react";
 
 const REPO_URL = "https://github.com/Regantih/open-personal-agent";
@@ -451,6 +451,20 @@ function DataTab({ state }: { state: StateSnapshot }) {
             ))}
           </ul>
         ) : <p className="text-sm text-muted-foreground">No drafts or sent mail.</p>}
+      </Section>
+      <Section icon={<Phone className="h-3.5 w-3.5" />} title="Calls">
+        {state.calls.length ? (
+          <ul className="divide-y rounded-lg border bg-card">
+            {state.calls.map((c) => (
+              <li key={c.id} className="px-3 py-2 text-sm" data-testid={`row-call-${c.id}`}>
+                <div className="flex gap-2"><span className="min-w-0 flex-1 [overflow-wrap:anywhere]">{c.to}: {c.purpose}</span><Badge variant={c.status === "completed" ? "default" : "outline"}>{c.status}</Badge></div>
+                <div className="text-xs text-muted-foreground">
+                  {c.transcript?.length ? `${c.transcript.length} transcript lines` : c.outcome ?? "no transcript"} · {c.providerRef ?? "unplaced"}
+                </div>
+              </li>
+            ))}
+          </ul>
+        ) : <p className="text-sm text-muted-foreground">No calls placed. Ask the agent to call a business — it discloses itself and keeps a transcript.</p>}
       </Section>
     </div>
   );

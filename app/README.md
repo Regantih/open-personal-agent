@@ -37,9 +37,10 @@ This is a reference implementation of the [playbook](../docs/). It is small on p
 | Browser rung | Real Chromium via `playwright-core` — `browser_open`/`browser_act`/`browser_read`/`browser_close`, T3-gated, domain allowlist, CDP screencast live view + input takeover in the Browser tab, sessions revoked on kill switch |
 | Site-login vault | Real — AES-256-GCM website credentials the agent fills into its own browser (`browser_login`, T3). Secrets enter only via `POST /api/credentials` (Settings → Site logins), are never in tool params/approval rows, never returned by the API, and fills fail closed if the page host doesn't match the credential site |
 | Voice | Browser Web Speech STT → normal turn pipeline → ElevenLabs TTS (`ELEVENLABS_API_KEY`); mic + speaker buttons in the composer |
+| Outbound calls | Simulated line (scripted transcript) — or **real calls** with `TWILIO_ACCOUNT_SID`/`TWILIO_AUTH_TOKEN`/`TWILIO_FROM_NUMBER`/`PUBLIC_BASE_URL`: T2-gated, opens with a spoken AI disclosure, hourly cap, transcript (never audio) in the Data tab, kill switch hangs up live calls. Two-way conversation needs a realtime voice key (`OPA_REALTIME_API_KEY` or `OPENAI_API_KEY`); without it a one-way disclosed announcement plays |
 | Storage | SQLite (default) or PostgreSQL via `DATABASE_URL` — same `Store` interface, verified against Postgres 16 |
 | Rate limits & headers | Fixed-window limiter on `/api/auth/*` and message/webhook routes; CSP/HSTS/security headers on every response (`server/security.ts`) |
-| Eval suite | 74 deterministic tasks (`npm run eval`) |
+| Eval suite | 79 deterministic tasks (`npm run eval`) |
 
 ## Run it
 
@@ -88,6 +89,8 @@ Run from the `app/` directory so it can find `../spec/risk-policy/policy.example
 | `OMF_SCHEMA_PATH` | OMF JSON schema | `../spec/open-memory-format/schema.json` |
 | `MANDATE_SECRET` | HMAC key for mandates | generated and stored in the DB |
 | `TWILIO_AUTH_TOKEN` | Verifies inbound SMS signatures | SMS disabled if unset |
+| `TWILIO_ACCOUNT_SID` / `TWILIO_FROM_NUMBER` | Outbound calls via Twilio Voice | calls simulated if unset |
+| `OPA_REALTIME_API_KEY` (or `OPENAI_API_KEY`) / `OPA_REALTIME_MODEL` | Two-way call audio (realtime voice model over the media stream) | one-way announcement calls |
 | `PUBLIC_BASE_URL` | Public URL Twilio calls, used in signature checks | none |
 | `OWNER_PHONE` | Only this E.164 number may text the agent (single-user mode) | any verified sender |
 | `OPA_BACKGROUND_INTERVAL_MIN` | Run the proactive check every N minutes (all users) | off |

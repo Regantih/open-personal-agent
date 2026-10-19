@@ -52,6 +52,7 @@ export function escalate(t: Tier, by: number): Tier {
 export const limits = {
   maxDailySpendUsd: policy.limits?.max_daily_spend_usd ?? 500,
   defaultStandingLimitUsd: policy.limits?.default_standing_limit_usd ?? 0,
+  maxOutboundCallsPerHour: policy.limits?.max_outbound_calls_per_hour ?? 10,
 };
 export const confirmationTtlMs = (policy.tiers.T3?.confirmation?.expires_after_seconds ?? 600) * 1000;
 export const killPhrases = (policy.kill_switch?.phrases ?? ["stop everything"]).map((p) => p.toLowerCase());

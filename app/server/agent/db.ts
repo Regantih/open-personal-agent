@@ -59,6 +59,7 @@ CREATE TABLE IF NOT EXISTS user_keys (user_id TEXT NOT NULL, provider TEXT NOT N
 CREATE TABLE IF NOT EXISTS usage (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL, ts INTEGER, lane TEXT, model TEXT, input_tokens INTEGER, output_tokens INTEGER);
 CREATE TABLE IF NOT EXISTS provider_connections (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL, provider TEXT NOT NULL, account_label TEXT, scopes TEXT, connected_at INTEGER, UNIQUE(user_id, provider));
 CREATE TABLE IF NOT EXISTS site_credentials (user_id TEXT NOT NULL, site TEXT NOT NULL, username TEXT NOT NULL, ciphertext TEXT NOT NULL, iv TEXT NOT NULL, tag TEXT NOT NULL, created_at INTEGER, PRIMARY KEY (user_id, site));
+CREATE TABLE IF NOT EXISTS calls (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL, to_number TEXT NOT NULL, purpose TEXT, status TEXT, provider_ref TEXT, transcript TEXT, outcome TEXT, created_at INTEGER, ended_at INTEGER);
 `;
 
 const PG_DDL = SQLITE_DDL
@@ -201,6 +202,10 @@ export interface Store {
   seed(force?: boolean): Promise<void>;
   usageToday(lane: string): Promise<{ turns: number; inputTokens: number; outputTokens: number }>;
   recordUsage(lane: string, model: string, inputTokens: number, outputTokens: number): Promise<void>;
+  addCall(to: string, purpose: string): Promise<CallRow>;
+  getCall(id: number): Promise<CallRow | undefined>;
+  updateCall(id: number, patch: { status?: string; providerRef?: string | null; transcript?: unknown[] | null; outcome?: string; endedAt?: number }): Promise<void>;
+  listCalls(limit?: number): Promise<CallRow[]>;
 }
 
 export function storeFor(userId: string): Store {
@@ -409,6 +414,12 @@ export function storeFor(userId: string): Store {
       const r = await drv.get<any>("SELECT COUNT(*) AS n, COALESCE(SUM(input_tokens),0) AS i, COALESCE(SUM(output_tokens),0) AS o FROM usage WHERE user_id = ? AND lane = ? AND ts >= ?", [u, lane, start.getTime()]);
       return { turns: Number(r?.n ?? 0), inputTokens: Number(r?.i ?? 0), outputTokens: Number(r?.o ?? 0) };
     },
+
+    // ----- outbound calls -----
+    addCall: (to, purpose) => addCall(u, to, purpose),
+    getCall: (id) => getCall(u, id),
+    updateCall: (id, patch) => updateCall(id, patch),
+    listCalls: (limit = 50) => listCalls(u, limit),
 
     // ----- seed / reset (per user) -----
     async seed(force = false) {
@@ -651,4 +662,50 @@ export async function listCredentials(userId: string): Promise<CredentialMeta[]>
 export async function deleteCredential(userId: string, site: string): Promise<boolean> {
   await initDb();
   return (await drv.run("DELETE FROM site_credentials WHERE user_id = ? AND site = ?", [userId, site])).changes > 0;
+}
+
+// ----- outbound calls (voice lane; transcripts only, never audio) -----
+export interface CallRow { id: number; userId: string; to: string; purpose: string; status: string; providerRef: string | null; transcript: { speaker: string; text: string; at: number }[] | null; outcome: string | null; createdAt: number; endedAt: number | null }
+const rowToCall = (r: any): CallRow => ({
+  id: Number(r.id), userId: r.user_id, to: r.to_number, purpose: r.purpose, status: r.status,
+  providerRef: r.provider_ref ?? null, transcript: r.transcript ? JSON.parse(r.transcript) : null,
+  outcome: r.outcome ?? null, createdAt: Number(r.created_at), endedAt: r.ended_at === null ? null : Number(r.ended_at),
+});
+export async function addCall(userId: string, to: string, purpose: string): Promise<CallRow> {
+  await initDb();
+  const id = await drv.insert("INSERT INTO calls (user_id, to_number, purpose, status, created_at) VALUES (?, ?, ?, 'queued', ?)", [userId, to, purpose, Date.now()]);
+  return { id, userId, to, purpose, status: "queued", providerRef: null, transcript: null, outcome: null, createdAt: Date.now(), endedAt: null };
+}
+export async function updateCall(id: number, patch: { status?: string; providerRef?: string | null; transcript?: unknown[] | null; outcome?: string; endedAt?: number }) {
+  await initDb();
+  if (patch.status !== undefined) await drv.run("UPDATE calls SET status = ? WHERE id = ?", [patch.status, id]);
+  if (patch.providerRef !== undefined) await drv.run("UPDATE calls SET provider_ref = ? WHERE id = ?", [patch.providerRef, id]);
+  if (patch.transcript !== undefined) await drv.run("UPDATE calls SET transcript = ? WHERE id = ?", [JSON.stringify(patch.transcript), id]);
+  if (patch.outcome !== undefined) await drv.run("UPDATE calls SET outcome = ? WHERE id = ?", [patch.outcome, id]);
+  if (patch.endedAt !== undefined) await drv.run("UPDATE calls SET ended_at = ? WHERE id = ?", [patch.endedAt, id]);
+}
+export async function updateCallByRef(providerRef: string, patch: { status?: string; transcript?: unknown[] | null; outcome?: string; endedAt?: number }): Promise<boolean> {
+  const c = await getCallByRef(providerRef);
+  if (!c) return false;
+  await updateCall(c.id, patch);
+  return true;
+}
+export async function getCall(userId: string, id: number): Promise<CallRow | undefined> {
+  await initDb();
+  const r = await drv.get<any>("SELECT * FROM calls WHERE id = ? AND user_id = ?", [id, userId]);
+  return r ? rowToCall(r) : undefined;
+}
+export async function getCallByRef(providerRef: string): Promise<CallRow | undefined> {
+  await initDb();
+  const r = await drv.get<any>("SELECT * FROM calls WHERE provider_ref = ?", [providerRef]);
+  return r ? rowToCall(r) : undefined;
+}
+export async function getCallById(id: number): Promise<CallRow | undefined> {
+  await initDb();
+  const r = await drv.get<any>("SELECT * FROM calls WHERE id = ?", [id]);
+  return r ? rowToCall(r) : undefined;
+}
+export async function listCalls(userId: string, limit = 50): Promise<CallRow[]> {
+  await initDb();
+  return (await drv.all<any>("SELECT * FROM calls WHERE user_id = ? ORDER BY id DESC LIMIT ?", [userId, limit])).map(rowToCall);
 }

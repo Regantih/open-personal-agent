@@ -193,6 +193,18 @@ export interface ActionSuggestion {
   prompt: string;
 }
 
+export interface Call {
+  id: number;
+  to: string;
+  purpose: string;
+  status: string;
+  providerRef: string | null;
+  transcript: { speaker: string; text: string; at: number }[] | null;
+  outcome: string | null;
+  createdAt: number;
+  endedAt: number | null;
+}
+
 export interface StateSnapshot {
   messages: Message[];
   approvals: Approval[];
@@ -204,6 +216,7 @@ export interface StateSnapshot {
   subscriptions: Subscription[];
   outbox: Outbox[];
   settings: Settings;
+  calls: Call[];
   suggestions: ActionSuggestion[];
   policy: { version: string; defaultTier: Tier; actions: { match: string; tier: Tier }[] };
 }

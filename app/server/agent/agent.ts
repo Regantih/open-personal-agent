@@ -2,6 +2,7 @@ import { storeFor, type Store } from "./db";
 import { tools, toolByName, type ToolContext } from "./tools";
 import { evaluate, confirmationTtlMs, killPhrases, policy } from "./policy";
 import { revokeBrowserSessions } from "./browser";
+import { callProvider } from "./calls";
 import { signMandate, verifyMandate } from "./vault";
 import { complete, providerName, type CallAuth, type CanonicalMessage, type ModelToolSchema } from "./llm";
 import { startTrace } from "./tracing";
@@ -251,6 +252,14 @@ export async function handleInbound(ctx: Ctx, text: string, channel: "web" | "sm
     // browser rung gets a real revocation too.
     if ((policy.kill_switch?.actions ?? []).includes("revoke_browser_sessions")) {
       await revokeBrowserSessions(ctx.userId).catch(() => {});
+    }
+    if ((policy.kill_switch?.actions ?? []).includes("end_active_calls")) {
+      const provider = callProvider();
+      for (const c of await store.listCalls()) {
+        if (!["queued", "ringing", "in_progress"].includes(c.status)) continue;
+        if (provider.end && c.providerRef) await provider.end(c.providerRef).catch(() => {});
+        await store.updateCall(c.id, { status: "ended_by_kill_switch", endedAt: Date.now() });
+      }
     }
     await store.logEvent("kill_switch", "Kill switch: paused all tasks, denied pending approvals, froze agent cards", { actions: policy.kill_switch?.actions ?? [] });
     return reply(store, "Stopped. I've paused everything, cancelled pending approvals, and frozen agent cards. I can still read and answer questions. Reply RESUME when you want me to act again.", channel);

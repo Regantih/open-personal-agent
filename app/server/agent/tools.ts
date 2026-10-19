@@ -5,6 +5,7 @@ import { issueSingleUseCard } from "./vault";
 import { limits } from "./policy";
 import { emailSender } from "./email";
 import * as browser from "./browser";
+import * as calls from "./calls";
 import * as credentials from "./credentials";
 import * as google from "./providers/google";
 
@@ -343,6 +344,65 @@ export const tools: ToolDef[] = [
       return { action: "browser.login", summary: `Fill saved ${site} login in the agent browser`, merchant: site };
     },
     async execute(i, ctx) { return credentials.browserLogin(ctx.userId, String(i.site), !!i.submit); },
+  },
+  {
+    name: "call_start",
+    description: "Place an outbound phone call on the user's behalf (e.g. call a restaurant to book a table, chase a carrier about a package). The call opens with a spoken AI disclosure. Only the number and the stated purpose are used — nothing else about the user is shared.",
+    input_schema: {
+      type: "object",
+      properties: {
+        to: { type: "string", description: "E.164 phone number, e.g. +14155550123" },
+        purpose: { type: "string", description: "What the call should accomplish, in one or two sentences" },
+      },
+      required: ["to", "purpose"],
+    },
+    prepare: async (i, ctx) => {
+      const to = calls.normalizePhone(String(i.to || ""));
+      const purpose = String(i.purpose || "").trim().slice(0, 400);
+      if (!purpose) throw new Error("purpose required");
+      const recent = (await ctx.store.listCalls()).filter((c) => Date.now() - c.createdAt < 3600000);
+      if (recent.length >= limits.maxOutboundCallsPerHour) {
+        throw new Error(`Outbound call limit reached (${limits.maxOutboundCallsPerHour}/hour)`);
+      }
+      return { action: "call.outbound.business", summary: `Call ${to}: ${purpose} — opens with AI disclosure`, merchant: to };
+    },
+    async execute(i, ctx) {
+      const to = calls.normalizePhone(String(i.to));
+      const call = await ctx.store.addCall(to, String(i.purpose).trim().slice(0, 400));
+      const provider = calls.callProvider();
+      const { providerRef } = await provider.start(ctx.userId, call.id, to, call.purpose);
+      const updated = await ctx.store.getCall(call.id);
+      return { call: updated, provider: provider.name, provider_ref: providerRef };
+    },
+  },
+  {
+    name: "call_status",
+    description: "Check the status and transcript of outbound calls the agent has placed.",
+    input_schema: { type: "object", properties: { call_id: { type: "integer" } }, required: [] },
+    prepare: () => ({ action: "call.read", summary: "Check call status" }),
+    async execute(i, ctx) {
+      if (i.call_id) {
+        const c = await ctx.store.getCall(Number(i.call_id));
+        if (!c) throw new Error(`No call ${i.call_id}`);
+        return c;
+      }
+      return { calls: await ctx.store.listCalls() };
+    },
+  },
+  {
+    name: "call_end",
+    description: "Hang up a live outbound call.",
+    input_schema: { type: "object", properties: { call_id: { type: "integer" } }, required: ["call_id"] },
+    prepare: (i) => ({ action: "call.end", summary: `End call ${i.call_id}` }),
+    async execute(i, ctx) {
+      const c = await ctx.store.getCall(Number(i.call_id));
+      if (!c) throw new Error(`No call ${i.call_id}`);
+      if (!["queued", "ringing", "in_progress"].includes(c.status)) throw new Error(`Call ${i.call_id} is already ${c.status}`);
+      const provider = calls.callProvider();
+      if (provider.end && c.providerRef) await provider.end(c.providerRef);
+      await ctx.store.updateCall(c.id, { status: "ended_by_user", endedAt: Date.now() });
+      return { ended: c.id };
+    },
   },
 ];
 
