@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest, getQueryFn, queryClient, API_BASE } from "@/lib/queryClient";
-import type { AgentEvent, Approval, Fact, Message, PanelWidget, Settings, StateSnapshot, Tier } from "@shared/schema";
+import type { ActionSuggestion, AgentEvent, Approval, Fact, Message, PanelWidget, Settings, StateSnapshot, Tier } from "@shared/schema";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -19,7 +19,7 @@ const REPO_URL = "https://github.com/Regantih/open-personal-agent";
 
 interface SessionInfo { userId: string | null; singleUser: boolean; email: string | null; phone: string | null }
 
-const FALLBACK_SUGGESTIONS = [
+const FALLBACK_SUGGESTIONS: ActionSuggestion[] = [
   { label: "Calendar this week", prompt: "What's on my calendar this week?" },
   { label: "Check my inbox", prompt: "Check my inbox and handle anything important" },
   { label: "Unused subscriptions", prompt: "Which subscriptions am I not using?" },
@@ -229,7 +229,7 @@ function Conversation({ state }: { state: StateSnapshot }) {
           )}
           <div className="chip-row mb-2 flex gap-2 overflow-x-auto pb-1 pr-6 sm:flex-wrap sm:overflow-visible sm:pr-0" role="list" aria-label="Suggestions">
             {(state.suggestions.length ? state.suggestions : FALLBACK_SUGGESTIONS).map((s, i) => (
-              <button key={s.label} role="listitem" onClick={() => submit(s.prompt)} disabled={send.isPending} data-testid={`button-suggestion-${i}`}
+              <button key={s.label} role="listitem" onClick={() => submit(s.prompt)} disabled={send.isPending} data-testid={`button-suggestion-${i}`} title={s.reason || s.prompt}
                 className="shrink-0 rounded-full border bg-card px-3 py-1 text-xs text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground disabled:opacity-50">
                 {s.label}
               </button>

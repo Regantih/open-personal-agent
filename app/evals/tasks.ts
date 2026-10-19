@@ -1253,4 +1253,77 @@ export const tasks: EvalTask[] = [
       } },
     ],
   },
+  {
+    id: "a01", name: "Anticipation: a flight inside 3 days yields check-in + airport-run buttons", category: "anticipation",
+    script: [
+      { run: async (h) => {
+        const { anticipate } = await import("../server/agent/anticipate");
+        await h.store.addCalendar("Flight AA102 DFW -> SFO", Date.now() + 40 * 3600000, Date.now() + 44 * 3600000, "event", "DFW");
+        const out = await anticipate(h.store);
+        const tags = out.map((a) => a.tag.split(":")[0]);
+        if (!tags.includes("checkin")) throw new Error(`no check-in suggestion: ${JSON.stringify(tags)}`);
+        if (!tags.includes("ground")) throw new Error(`no airport-run suggestion: ${JSON.stringify(tags)}`);
+        const checkin = out.find((a) => a.tag.startsWith("checkin"));
+        if (!checkin?.prompt.includes("AA102")) throw new Error("suggestion not bound to the real event");
+      } },
+    ],
+  },
+  {
+    id: "a02", name: "Anticipation: a reservation inside 2 days offers a confirmation call", category: "anticipation",
+    script: [
+      { run: async (h) => {
+        const { anticipate } = await import("../server/agent/anticipate");
+        await h.store.addCalendar("Dinner reservation at Monarch", Date.now() + 20 * 3600000, Date.now() + 22 * 3600000, "event");
+        const out = await anticipate(h.store);
+        const confirm = out.find((a) => a.tag.startsWith("confirm:"));
+        if (!confirm) throw new Error("no confirm-call suggestion");
+        if (!/call/i.test(confirm.prompt)) throw new Error("suggestion does not invoke the call lane");
+      } },
+    ],
+  },
+  {
+    id: "a03", name: "Anticipation: pending approvals yield a read-only review button, never an approve", category: "anticipation",
+    script: [
+      ...turn("Send the drafted email", [
+        { tool: "send_email", input: { draft_id: 1 } },
+        { say: "It needs your approval." },
+      ]),
+      { run: async (h) => {
+        const pending = (await h.allApprovals()).filter((a) => a.status === "pending");
+        if (!pending.length) throw new Error("no pending approval seeded");
+        const { anticipate } = await import("../server/agent/anticipate");
+        const out = await anticipate(h.store);
+        const review = out.find((a) => a.tag === "approvals");
+        if (!review) throw new Error("no review suggestion");
+        if (/approve/i.test(review.prompt)) throw new Error("suggestion would approve — must be read-only");
+      } },
+      { decide_pending: "deny" },
+    ],
+  },
+  {
+    id: "a04", name: "Anticipation: quiet state produces no noise", category: "anticipation",
+    script: [
+      { run: async (h) => {
+        const { anticipate } = await import("../server/agent/anticipate");
+        const quiet = await h.db.findOrCreateUser({ email: "quiet@example.com" });
+        const out = await anticipate(h.db.storeFor(quiet.id));
+        if (out.length) throw new Error(`unexpected suggestions on quiet state: ${out.map((n) => n.tag).join(",")}`);
+      } },
+    ],
+  },
+  {
+    id: "a05", name: "Anticipation: suggestions are per-user", category: "anticipation",
+    script: [
+      { run: async (h) => {
+        const { anticipate } = await import("../server/agent/anticipate");
+        const a = await h.db.findOrCreateUser({ email: "alice@example.com" });
+        const b = await h.db.findOrCreateUser({ email: "bob@example.com" });
+        await h.db.storeFor(a.id).addCalendar("Flight UA9 DFW -> JFK", Date.now() + 30 * 3600000, Date.now() + 33 * 3600000, "event");
+        const forBob = await anticipate(h.db.storeFor(b.id));
+        if (forBob.some((x) => x.tag.startsWith("checkin") || x.tag.startsWith("ground"))) throw new Error("alice's flight anticipated for bob");
+        const forAlice = await anticipate(h.db.storeFor(a.id));
+        if (!forAlice.some((x) => x.tag.startsWith("checkin"))) throw new Error("alice's own anticipation missing");
+      } },
+    ],
+  },
 ];

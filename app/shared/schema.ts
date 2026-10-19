@@ -191,6 +191,7 @@ export interface Settings {
 export interface ActionSuggestion {
   label: string;
   prompt: string;
+  reason?: string;
 }
 
 export interface PanelWidget { type: string; title?: string; limit?: number; text?: string }
