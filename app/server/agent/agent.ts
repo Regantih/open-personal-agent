@@ -243,7 +243,7 @@ export async function decideApproval(ctx: Ctx, id: number, decision: "approve" |
   if (decision === "deny") {
     await store.updateApproval(id, { status: "denied", result: `Denied via ${via}` });
     await store.logEvent("approval", `Denied ${a.code}: ${a.summary}`, { approval_id: id, via });
-    const msg = `Okay, I won't do that: ${a.summary}.`;
+    const msg = `Okay, I won't do that: ${a.summary.replace(/[.\s]+$/, "")}.`;
     await store.addMessage("agent", "web", msg);
     lf?.end({ output: msg });
     return { ok: true, message: msg };
