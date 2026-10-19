@@ -90,7 +90,8 @@ N=narration-v3
 #        05 approve, 06 browser, 07 liveview, 08 close, 09 voice/memory,
 #        10 connections, 11 policy, 12 tools, 13 providers, 14 end
 FILES=(01 15 16 02 03 04 05 06 07 08 09 10 11 12 13 14)
-DELAYS=(3500 16000 29500 41000 51000 61000 70000 82000 99000 109000 118000 126000 139000 162000 174000 192000)
+# sequential, non-overlapping, roughly on-beat (see section boundaries above)
+DELAYS=(3500 19000 36000 50000 60500 69500 82000 96500 108000 121000 127500 140000 148500 161500 173500 189500)
 IN=""; FC=""
 for i in $(seq 0 15); do
   IN="$IN -i $N/line-${FILES[$i]}.mp3"
