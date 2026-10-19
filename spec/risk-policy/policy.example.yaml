@@ -55,6 +55,12 @@ actions:
     tier: T3
   - match: "browser.act"
     tier: T3
+  - match: "browser.login"
+    tier: T3
+  - match: "credentials.read"
+    tier: T0
+  - match: "credentials.delete"
+    tier: T1
   - match: "payment.*"
     tier: T3
   - match: "subscription.cancel"

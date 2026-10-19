@@ -1000,4 +1000,86 @@ export const tasks: EvalTask[] = [
       } },
     ],
   },
+
+  // ---------- credential vault ----------
+  {
+    id: "v01", name: "Vault: save encrypts, list exposes metadata only, delete removes", category: "vault",
+    script: [
+      { run: async (h) => {
+        const creds = await import("../server/agent/credentials");
+        const keys = await import("../server/agent/keys");
+        const db = await import("../server/agent/db");
+        await creds.saveCredential(h.ctx.userId, "https://GitHub.com/login", "dev@example.com", "s3cret-pw!");
+        const listed = await creds.listCredentials(h.ctx.userId);
+        const row = listed.find((c) => c.site === "github.com");
+        if (!row || row.username !== "dev@example.com") throw new Error(`credential not listed correctly: ${JSON.stringify(listed)}`);
+        if (JSON.stringify(listed).includes("s3cret")) throw new Error("plaintext password leaked into metadata listing");
+        const enc = await db.getCredentialEnc(h.ctx.userId, "github.com");
+        if (!enc) throw new Error("no encrypted row stored");
+        if ((await keys.decryptSecret(enc)) !== "s3cret-pw!") throw new Error("decrypt round-trip failed");
+        if (!(await creds.deleteCredential(h.ctx.userId, "github.com"))) throw new Error("delete reported no change");
+        if (await db.getCredentialEnc(h.ctx.userId, "github.com")) throw new Error("row survived delete");
+      } },
+    ],
+  },
+  {
+    id: "v02", name: "Vault: site validation rejects non-hostnames", category: "vault",
+    script: [
+      { run: async () => {
+        const creds = await import("../server/agent/credentials");
+        for (const bad of ["", "not a host", "http://", "javascript:alert(1)", "site,other.com"]) {
+          let threw = false;
+          try { creds.normalizeSite(bad); } catch { threw = true; }
+          if (!threw) throw new Error(`accepted invalid site ${JSON.stringify(bad)}`);
+        }
+        if (creds.normalizeSite("https://www.Example.COM/path?q=1") !== "example.com") throw new Error("normalization wrong");
+      } },
+    ],
+  },
+  {
+    id: "v03", name: "Vault: credential_list is T0, delete is T1, login is T3", category: "vault",
+    script: [
+      { run: async (h) => {
+        const { evaluate } = h.policy;
+        const store = h.store;
+        const rd = await evaluate("credentials.read", { tainted: false, amountUsd: null, store });
+        if (rd.tier !== "T0") throw new Error(`credentials.read tiered ${rd.tier}, expected T0`);
+        const del = await evaluate("credentials.delete", { tainted: false, amountUsd: null, store });
+        if (del.tier !== "T1") throw new Error(`credentials.delete tiered ${del.tier}, expected T1`);
+        const login = await evaluate("browser.login", { tainted: false, amountUsd: null, store });
+        if (login.tier !== "T3") throw new Error(`browser.login tiered ${login.tier}, expected T3`);
+      } },
+    ],
+  },
+  {
+    id: "v04", name: "Vault: browser_login fails fast without a saved credential", category: "vault",
+    script: [
+      ...turn("Log me into github.com", [
+        { tool: "browser_login", input: { site: "github.com" } },
+        { say: "I don't have a saved login for that." },
+      ]),
+      { expect: { approvalsPending: 0, tool: { name: "browser_login", status: "error" } } },
+    ],
+  },
+  {
+    id: "v05", name: "Vault: browser_login asks T3 when a credential exists", category: "vault",
+    script: [
+      { run: async (h) => {
+        const creds = await import("../server/agent/credentials");
+        await creds.saveCredential(h.ctx.userId, "github.com", "dev@example.com", "s3cret-pw!");
+      } },
+      ...turn("Log me into github.com", [
+        { tool: "browser_login", input: { site: "github.com" } },
+        { say: "That needs approval." },
+      ]),
+      { expect: { approvalsPending: 1, approval: { action: "browser.login", tier: "T3" } } },
+      // Approval params must never carry the secret — the params row is what
+      // executes later and what the UI/API exposes.
+      { run: async (h) => {
+        const a = (await h.allApprovals()).find((a) => a.action === "browser.login");
+        if (!a) throw new Error("no approval recorded");
+        if (JSON.stringify(a.params).includes("s3cret")) throw new Error("secret leaked into approval params");
+      } },
+    ],
+  },
 ];

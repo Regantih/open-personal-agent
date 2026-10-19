@@ -35,10 +35,11 @@ This is a reference implementation of the [playbook](../docs/). It is small on p
 | Tracing | Built-in event log plus optional Langfuse mirror (`LANGFUSE_*` env vars) |
 | Multi-user | Opt-in (`OPA_MULTI_USER=1`): magic-link/OTP sign-in, per-user stores, BYOK vault, per-user agent email |
 | Browser rung | Real Chromium via `playwright-core` — `browser_open`/`browser_act`/`browser_read`/`browser_close`, T3-gated, domain allowlist, CDP screencast live view + input takeover in the Browser tab, sessions revoked on kill switch |
+| Site-login vault | Real — AES-256-GCM website credentials the agent fills into its own browser (`browser_login`, T3). Secrets enter only via `POST /api/credentials` (Settings → Site logins), are never in tool params/approval rows, never returned by the API, and fills fail closed if the page host doesn't match the credential site |
 | Voice | Browser Web Speech STT → normal turn pipeline → ElevenLabs TTS (`ELEVENLABS_API_KEY`); mic + speaker buttons in the composer |
 | Storage | SQLite (default) or PostgreSQL via `DATABASE_URL` — same `Store` interface, verified against Postgres 16 |
 | Rate limits & headers | Fixed-window limiter on `/api/auth/*` and message/webhook routes; CSP/HSTS/security headers on every response (`server/security.ts`) |
-| Eval suite | 69 deterministic tasks (`npm run eval`) |
+| Eval suite | 74 deterministic tasks (`npm run eval`) |
 
 ## Run it
 

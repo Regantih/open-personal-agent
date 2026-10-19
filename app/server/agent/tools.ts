@@ -5,6 +5,7 @@ import { issueSingleUseCard } from "./vault";
 import { limits } from "./policy";
 import { emailSender } from "./email";
 import * as browser from "./browser";
+import * as credentials from "./credentials";
 import * as google from "./providers/google";
 
 // Each tool declares the policy action it performs. The runner (agent.ts) evaluates that action against the Risk Policy
@@ -297,6 +298,51 @@ export const tools: ToolDef[] = [
     input_schema: { type: "object", properties: {}, required: [] },
     prepare: () => ({ action: "browser.close", summary: "Close browser session" }),
     async execute(_i, ctx) { return { closed: await browser.closeBrowser(ctx.userId) }; },
+  },
+  {
+    name: "credential_list",
+    description: "List the website logins the user saved in the credential vault (site + username only — passwords are never exposed to the agent).",
+    input_schema: { type: "object", properties: {}, required: [] },
+    prepare: () => ({ action: "credentials.read", summary: "List saved site logins" }),
+    async execute(_i, ctx) {
+      const creds = await credentials.listCredentials(ctx.userId);
+      return {
+        notice: "These are the only logins available. Passwords stay in the vault — use browser_login to fill them; you can never read them.",
+        credentials: creds,
+      };
+    },
+  },
+  {
+    name: "credential_delete",
+    description: "Remove a saved website login from the credential vault.",
+    input_schema: { type: "object", properties: { site: { type: "string", description: "hostname, e.g. github.com" } }, required: ["site"] },
+    prepare: (i) => ({ action: "credentials.delete", summary: `Delete saved login for ${i.site}` }),
+    async execute(i, ctx) {
+      const site = credentials.normalizeSite(String(i.site || ""));
+      const removed = await credentials.deleteCredential(ctx.userId, site);
+      if (!removed) throw new Error(`No saved login for ${site}`);
+      return { deleted: site };
+    },
+  },
+  {
+    name: "browser_login",
+    description: "Fill the user's saved login for a site into the open browser page (username + password fields). The password never leaves the vault — it is typed into the page directly. Navigate to the site's login page first.",
+    input_schema: {
+      type: "object",
+      properties: {
+        site: { type: "string", description: "hostname the credential is saved for, e.g. github.com — must match the current page" },
+        submit: { type: "boolean", description: "press Enter after filling (default false)" },
+      },
+      required: ["site"],
+    },
+    prepare: async (i, ctx) => {
+      const site = credentials.normalizeSite(String(i.site || ""));
+      if (!(await credentials.hasCredential(ctx.userId, site))) {
+        throw new Error(`No saved login for ${site} — ask the user to add it in Settings, or have them type it in the Browser panel`);
+      }
+      return { action: "browser.login", summary: `Fill saved ${site} login in the agent browser`, merchant: site };
+    },
+    async execute(i, ctx) { return credentials.browserLogin(ctx.userId, String(i.site), !!i.submit); },
   },
 ];
 

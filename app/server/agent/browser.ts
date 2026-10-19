@@ -147,7 +147,10 @@ async function snapshot(s: Session): Promise<Record<string, unknown>> {
       .filter((e) => !!(e.offsetWidth || e.offsetHeight))
       .slice(0, 80)
       .map((e, i) => {
-        const label = (e.getAttribute("aria-label") || (e as HTMLInputElement).placeholder || e.innerText || (e as HTMLInputElement).value || e.id || "").trim().slice(0, 80);
+        // Never surface input.value for password fields — a filled secret must
+        // not leak into the model's element list.
+        const isPw = (e as HTMLInputElement).type === "password";
+        const label = (e.getAttribute("aria-label") || (e as HTMLInputElement).placeholder || e.innerText || (isPw ? "password field" : (e as HTMLInputElement).value) || e.id || "").trim().slice(0, 80);
         // build a stable-ish selector the action step can target
         let sel = e.id ? `#${CSS.escape(e.id)}` : "";
         if (!sel) {
@@ -241,6 +244,35 @@ export async function screenshot(userId: string): Promise<Buffer | null> {
   const p = s.page.screenshot({ type: "jpeg", quality: 70 }).finally(() => shotInFlight.delete(userId));
   shotInFlight.set(userId, p);
   return p;
+}
+
+// Vault fill: type stored credentials into the *current* page's login form.
+// The password arrives here already decrypted (credentials.ts) and is only
+// ever passed to page.fill — it is never logged, snapshotted, or returned.
+export async function fillLogin(userId: string, input: { site: string; username: string; password: string; submit?: boolean }) {
+  const s = sessions.get(userId);
+  if (!s) throw new Error("No browser session — open the site first");
+  s.lastTouch = Date.now();
+  // Anti-exfil: only fill when the credential's site matches the live page's
+  // host (subdomains of the site count; a redirected page fails closed).
+  const host = new URL(s.page.url()).hostname.replace(/^www\./, "");
+  const want = input.site.replace(/^www\./, "");
+  if (host !== want && !host.endsWith("." + want)) {
+    throw new Error(`Refusing to fill ${want} credentials on ${host}`);
+  }
+  const pw = s.page.locator('input[type="password"]:visible').first();
+  const usr = s.page
+    .locator('input[autocomplete="username"], input[autocomplete="email"], input[type="email"], input[name*="user" i], input[name*="email" i], input[name*="login" i], input[type="text"], input[type="tel"]')
+    .locator("visible=true").first();
+  const hasPw = (await pw.count()) > 0;
+  const hasUsr = (await usr.count()) > 0;
+  if (!hasPw && !hasUsr) throw new Error("No login fields found on this page");
+  if (hasUsr) await usr.fill(input.username, { timeout: 10_000 });
+  if (hasPw) await pw.fill(input.password, { timeout: 10_000 });
+  if (input.submit) await s.page.keyboard.press("Enter");
+  await s.page.waitForTimeout(700);
+  const snap = await snapshot(s);
+  return { ...snap, credential_fill: { site: want, username: input.username, password: "filled" } };
 }
 
 // Human takeover: forward input into the session page.

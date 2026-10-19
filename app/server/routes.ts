@@ -18,6 +18,7 @@ import { requireUser } from "./auth";
 import * as auth from "./auth";
 import { securityHeaders, rateLimit } from "./security";
 import { browserStatus, latestFrame, screenshot, forwardInput, closeBrowser } from "./agent/browser";
+import { saveCredential, listCredentials, deleteCredential } from "./agent/credentials";
 import { ttsConfigured, synthesize } from "./agent/voice";
 import * as google from "./agent/providers/google";
 import { flightsLive } from "./agent/flights";
@@ -59,6 +60,7 @@ async function snapshot(ctx: Ctx): Promise<StateSnapshot> {
       boundChannels: await listBindings(ctx.userId),
       keyProviders: (await listUserKeyProviders(ctx.userId)).filter((p) => !p.includes(":")),
       connections: await listProviderConnections(ctx.userId),
+      credentials: await listCredentials(ctx.userId),
       oauthProviders: google.googleConfigured() ? ["google"] : [],
       providerStatus: {
         calendar: gconn ? "google-calendar" : "local",
@@ -283,6 +285,18 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     await saveUserKey((req as any).userId, provider, key);
     await ctx(req).store.logEvent("policy", `Stored ${provider} model key (encrypted at rest)`, null);
     res.json({ ok: true, provider });
+  });
+  // Credential vault: the only path a password takes into the system. Saved
+  // encrypted; the agent can list site+username and fill them into its own
+  // browser, but the secret is never returned by any endpoint or tool.
+  app.post("/api/credentials", async (req, res) => {
+    try {
+      const { site, username, password } = req.body ?? {};
+      res.json({ saved: await saveCredential((req as any).userId, String(site ?? ""), String(username ?? ""), String(password ?? "")) });
+    } catch (e: any) { res.status(400).json({ message: e.message }); }
+  });
+  app.delete("/api/credentials/:site", async (req, res) => {
+    res.json({ deleted: await deleteCredential((req as any).userId, req.params.site) });
   });
   app.delete("/api/keys/:provider", async (req, res) => {
     const ok = await deleteUserKey((req as any).userId, String(req.params.provider));

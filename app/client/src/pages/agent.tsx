@@ -11,7 +11,7 @@ import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import {
-  ArrowUp, Bell, Brain, Check, CircleAlert, Cpu, Download, ExternalLink, KeyRound, Link2, MessageSquare, Mic, MicOff, OctagonX, Play, RotateCcw,
+  ArrowUp, Bell, Brain, Check, CircleAlert, Cpu, Download, ExternalLink, KeyRound, Link2, Lock, MessageSquare, Mic, MicOff, OctagonX, Play, RotateCcw,
   ShieldCheck, Sparkles, Trash2, Upload, Volume2, Wrench, X, CalendarDays, Mail, CreditCard, Plane, Send, Radio,
 } from "lucide-react";
 
@@ -702,6 +702,9 @@ function AccountSection({ s }: { s: Settings }) {
   const [bindDev, setBindDev] = useState<string | null>(null);
   const [keyProvider, setKeyProvider] = useState("anthropic");
   const [keyValue, setKeyValue] = useState("");
+  const [credSite, setCredSite] = useState("");
+  const [credUser, setCredUser] = useState("");
+  const [credPass, setCredPass] = useState("");
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ["/api/state"] });
 
   const bindStart = useMutation({
@@ -727,6 +730,15 @@ function AccountSection({ s }: { s: Settings }) {
     mutationFn: async () => apiRequest("POST", "/api/connect/google/disconnect"),
     onSuccess: () => { invalidate(); toast({ title: "Google disconnected" }); },
     onError: (e: Error) => toast({ title: "Disconnect failed", description: e.message.replace(/^\d+: /, ""), variant: "destructive" }),
+  });
+  const saveCred = useMutation({
+    mutationFn: async () => (await apiRequest("POST", "/api/credentials", { site: credSite, username: credUser, password: credPass })).json(),
+    onSuccess: () => { setCredSite(""); setCredUser(""); setCredPass(""); invalidate(); toast({ title: "Login saved — encrypted at rest" }); },
+    onError: (e: Error) => toast({ title: "Login rejected", description: e.message.replace(/^\d+: /, ""), variant: "destructive" }),
+  });
+  const delCred = useMutation({
+    mutationFn: async (site: string) => apiRequest("DELETE", `/api/credentials/${site}`),
+    onSuccess: invalidate,
   });
   const logout = useMutation({
     mutationFn: async () => apiRequest("POST", "/api/auth/logout"),
@@ -838,6 +850,26 @@ function AccountSection({ s }: { s: Settings }) {
           </select>
           <Input type="password" value={keyValue} onChange={(e) => setKeyValue(e.target.value)} placeholder="sk-…" className="h-8 flex-1 font-mono text-xs" data-testid="input-byok-key" />
           <Button size="sm" variant="outline" className="h-8" onClick={() => saveKey.mutate()} disabled={keyValue.length < 8 || saveKey.isPending} data-testid="button-save-key">Save</Button>
+        </div>
+      </div>
+
+      <div className="rounded-lg border bg-card p-3">
+        <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground"><Lock className="h-3.5 w-3.5" /> Site logins (vault)</div>
+        <p className="mt-1 text-xs text-muted-foreground">Logins the agent can type into its own browser (T3, with approval). Passwords are encrypted at rest and are never shown to the model or returned by the API.</p>
+        <ul className="mt-2 space-y-1">
+          {(s.credentials ?? []).map((c) => (
+            <li key={c.site} className="flex items-center gap-2 text-xs" data-testid={`row-credential-${c.site}`}>
+              <Badge variant="outline">{c.site}</Badge><span className="text-muted-foreground">{c.username}</span>
+              <Button size="sm" variant="ghost" className="ml-auto h-6 px-2 text-xs" onClick={() => delCred.mutate(c.site)} data-testid={`button-delcred-${c.site}`}>Remove</Button>
+            </li>
+          ))}
+          {!(s.credentials ?? []).length && <li className="text-xs text-muted-foreground">No logins saved.</li>}
+        </ul>
+        <div className="mt-3 flex gap-1.5">
+          <Input value={credSite} onChange={(e) => setCredSite(e.target.value)} placeholder="site.com" className="h-8 w-28 font-mono text-xs" data-testid="input-cred-site" />
+          <Input value={credUser} onChange={(e) => setCredUser(e.target.value)} placeholder="username" className="h-8 flex-1 text-xs" data-testid="input-cred-user" />
+          <Input type="password" value={credPass} onChange={(e) => setCredPass(e.target.value)} placeholder="password" className="h-8 flex-1 font-mono text-xs" data-testid="input-cred-pass" />
+          <Button size="sm" variant="outline" className="h-8" onClick={() => saveCred.mutate()} disabled={!credSite.trim() || !credUser.trim() || !credPass || saveCred.isPending} data-testid="button-save-cred">Save</Button>
         </div>
       </div>
     </div>

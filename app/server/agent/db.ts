@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS channel_bindings (id INTEGER PRIMARY KEY AUTOINCREMEN
 CREATE TABLE IF NOT EXISTS user_keys (user_id TEXT NOT NULL, provider TEXT NOT NULL, ciphertext TEXT NOT NULL, iv TEXT NOT NULL, tag TEXT NOT NULL, created_at INTEGER, PRIMARY KEY (user_id, provider));
 CREATE TABLE IF NOT EXISTS usage (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL, ts INTEGER, lane TEXT, model TEXT, input_tokens INTEGER, output_tokens INTEGER);
 CREATE TABLE IF NOT EXISTS provider_connections (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL, provider TEXT NOT NULL, account_label TEXT, scopes TEXT, connected_at INTEGER, UNIQUE(user_id, provider));
+CREATE TABLE IF NOT EXISTS site_credentials (user_id TEXT NOT NULL, site TEXT NOT NULL, username TEXT NOT NULL, ciphertext TEXT NOT NULL, iv TEXT NOT NULL, tag TEXT NOT NULL, created_at INTEGER, PRIMARY KEY (user_id, site));
 `;
 
 const PG_DDL = SQLITE_DDL
@@ -625,4 +626,29 @@ export async function listProviderConnections(userId: string): Promise<ProviderC
 export async function deleteProviderConnection(userId: string, provider: string): Promise<boolean> {
   await initDb();
   return (await drv.run("DELETE FROM provider_connections WHERE user_id = ? AND provider = ?", [userId, provider])).changes > 0;
+}
+
+// ----- site credential vault (encrypted at rest; see keys.ts for enc/dec) -----
+// Website logins the agent can fill into its own browser. Listings expose only
+// site + username; the encrypted blob leaves the vault solely for a browser
+// fill — it is never returned to the model, the client, or the API.
+export interface CredentialMeta { site: string; username: string; createdAt: number }
+export async function putCredential(userId: string, site: string, username: string, enc: EncBlob) {
+  await initDb();
+  await drv.run("INSERT INTO site_credentials (user_id, site, username, ciphertext, iv, tag, created_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(user_id, site) DO UPDATE SET username = excluded.username, ciphertext = excluded.ciphertext, iv = excluded.iv, tag = excluded.tag, created_at = excluded.created_at",
+    [userId, site, username, enc.ciphertext, enc.iv, enc.tag, Date.now()]);
+}
+export async function getCredentialEnc(userId: string, site: string): Promise<(EncBlob & { username: string }) | null> {
+  await initDb();
+  const r = await drv.get<any>("SELECT username, ciphertext, iv, tag FROM site_credentials WHERE user_id = ? AND site = ?", [userId, site]);
+  return r ? { username: r.username, ciphertext: r.ciphertext, iv: r.iv, tag: r.tag } : null;
+}
+export async function listCredentials(userId: string): Promise<CredentialMeta[]> {
+  await initDb();
+  return (await drv.all<any>("SELECT site, username, created_at FROM site_credentials WHERE user_id = ? ORDER BY site", [userId]))
+    .map((r) => ({ site: r.site, username: r.username, createdAt: Number(r.created_at) }));
+}
+export async function deleteCredential(userId: string, site: string): Promise<boolean> {
+  await initDb();
+  return (await drv.run("DELETE FROM site_credentials WHERE user_id = ? AND site = ?", [userId, site])).changes > 0;
 }

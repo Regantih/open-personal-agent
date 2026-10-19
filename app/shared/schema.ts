@@ -180,6 +180,7 @@ export interface Settings {
   boundChannels: { channel: string; address: string; verifiedAt: number }[];
   keyProviders: string[];
   connections: ProviderConnectionInfo[];
+  credentials: { site: string; username: string; createdAt: number }[];
   oauthProviders: string[];
   providerStatus: { calendar: string; inbox: string; flights: string; cards: string };
   usageToday: { turns: number; inputTokens: number; outputTokens: number };
