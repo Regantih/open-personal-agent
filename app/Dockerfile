@@ -17,6 +17,10 @@ RUN npm run build
 FROM node:22-slim
 WORKDIR /app
 ENV NODE_ENV=production
+# Chromium for the browser rung (playwright-core drives it via OPA_CHROME_PATH).
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends chromium fonts-liberation \
+ && rm -rf /var/lib/apt/lists/*
 COPY --from=build /app/package.json ./
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
