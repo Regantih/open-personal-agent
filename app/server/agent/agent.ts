@@ -15,8 +15,8 @@ import type { Approval } from "@shared/schema";
 // Model router: frontier model for real-time planning, small model for background (batch lane) work.
 // Provider selected by OPA_LLM_PROVIDER (anthropic | openai). See llm.ts.
 export const models = {
-  planner: process.env.OPA_PLANNER_MODEL || "claude_sonnet_5_5",
-  fast: process.env.OPA_FAST_MODEL || "claude_haiku_4_5",
+  planner: process.env.OPA_PLANNER_MODEL || "claude-sonnet-4-5-20250929",
+  fast: process.env.OPA_FAST_MODEL || "claude-haiku-4-5-20251001",
 };
 export const timezone = process.env.OPA_TIMEZONE || "America/Chicago";
 
