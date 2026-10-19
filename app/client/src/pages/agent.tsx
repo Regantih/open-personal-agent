@@ -210,6 +210,22 @@ function Conversation({ state }: { state: StateSnapshot }) {
     <section className="flex h-full min-h-0 flex-col" aria-label="Conversation">
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6">
         <div className="mx-auto flex max-w-2xl flex-col gap-4">
+          {state.messages.length === 0 && !pendingText && (
+            <div className="mt-8 rounded-2xl border bg-card p-6 text-center" data-testid="card-welcome">
+              <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-full border bg-accent"><Sparkles className="h-5 w-5 text-primary" /></div>
+              <h2 className="mt-3 text-lg font-semibold tracking-tight">Your agent is listening</h2>
+              <p className="mx-auto mt-1 max-w-sm text-sm leading-relaxed text-muted-foreground">
+                Text it like a person — plan a trip, audit subscriptions, have it call someone, or just ask it to remember things.
+              </p>
+              <div className="mx-auto mt-4 grid max-w-sm grid-cols-2 gap-2 text-left text-[13px]">
+                <div className="rounded-lg border bg-background px-3 py-2"><Phone className="mb-1 h-3.5 w-3.5 text-primary" />Call a business for you</div>
+                <div className="rounded-lg border bg-background px-3 py-2"><Plane className="mb-1 h-3.5 w-3.5 text-primary" />Search + book travel</div>
+                <div className="rounded-lg border bg-background px-3 py-2"><Brain className="mb-1 h-3.5 w-3.5 text-primary" />Remember what matters</div>
+                <div className="rounded-lg border bg-background px-3 py-2"><ShieldCheck className="mb-1 h-3.5 w-3.5 text-primary" />Asks before it acts</div>
+              </div>
+              <p className="mt-4 text-xs text-muted-foreground">Try a suggestion below — or just start typing.</p>
+            </div>
+          )}
           {state.messages.map((m) => <MessageBubble key={m.id} m={m} />)}
           {pendingText && (
             <>
@@ -313,6 +329,7 @@ function ActivityTab({ events }: { events: AgentEvent[] }) {
         ))}
       </div>
       <p className="mb-3 text-xs text-muted-foreground">Append-only log of every message, model call, policy decision, approval, and execution.</p>
+      {list.length === 0 && <div className="grid place-items-center rounded-lg border border-dashed py-8 text-sm text-muted-foreground">No events yet — send the agent a message and watch the log fill in.</div>}
       <ol className="space-y-1">
         {list.map((e) => (
           <li key={e.id} data-testid={`row-event-${e.id}`}>
@@ -676,11 +693,35 @@ function SignIn() {
     onError: (e: Error) => toast({ title: "Code rejected", description: e.message.replace(/^\d+: /, ""), variant: "destructive" }),
   });
 
+  const [legal, setLegal] = useState<"terms" | "privacy" | null>(null);
+
+  const FEATURES = [
+    { icon: Sparkles, title: "Does things, not just answers", body: "Books flights, calls businesses, texts people, watches your inbox and calendar." },
+    { icon: ShieldCheck, title: "Asks before it acts", body: "Anything that spends money or acts as you shows an approval card first — a signed mandate executes it." },
+    { icon: Brain, title: "Memory you own", body: "Every fact it stores shows its provenance. Export all of it, or delete it, any time." },
+    { icon: Phone, title: "Talks to people", body: "Its own phone and email — calls the venue, chases the reply, texts you first when it matters." },
+  ];
+
   return (
-    <div className="flex min-h-[100dvh] items-center justify-center bg-background p-4">
-      <div className="w-full max-w-sm rounded-xl border bg-card p-6" data-testid="card-signin">
-        <h1 className="text-lg font-semibold tracking-tight">Open Personal Agent</h1>
-        <p className="mt-1 text-sm text-muted-foreground">A personal agent you can text. Sign in to link your inbox, calendar, and approvals to your account.</p>
+    <div className="flex min-h-[100dvh] flex-col bg-background">
+      <div className="mx-auto flex w-full max-w-5xl flex-1 flex-col items-center justify-center gap-10 px-4 py-10 lg:flex-row lg:gap-16">
+        <div className="max-w-md lg:flex-1">
+          <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Open Personal Agent</h1>
+          <p className="mt-3 text-[15px] leading-relaxed text-muted-foreground">
+            A personal agent that lives in your text messages — and does the work. It plans trips, calls the restaurant, chases the email, and remembers what matters. Everything consequential asks you first.
+          </p>
+          <div className="mt-6 space-y-4">
+            {FEATURES.map((f) => (
+              <div key={f.title} className="flex gap-3">
+                <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border bg-card"><f.icon className="h-4 w-4 text-primary" /></div>
+                <div><div className="text-sm font-medium">{f.title}</div><div className="text-[13px] leading-snug text-muted-foreground">{f.body}</div></div>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="w-full max-w-sm shrink-0 rounded-xl border bg-card p-6" data-testid="card-signin">
+          <h2 className="text-lg font-semibold tracking-tight">Sign in</h2>
+          <p className="mt-1 text-sm text-muted-foreground">Passwordless — a link or a text gets you in.</p>
         <div className="mt-4 flex gap-1 rounded-lg bg-muted p-1">
           {(["email", "phone"] as const).map((m) => (
             <button key={m} onClick={() => { setMode(m); setStage("enter"); }} data-testid={`button-auth-${m}`}
@@ -718,6 +759,48 @@ function SignIn() {
             )}
           </div>
         )}
+          <p className="mt-4 text-center text-[11px] leading-relaxed text-muted-foreground">
+            By signing in you agree to the <button className="underline hover:text-foreground" onClick={() => setLegal("terms")}>Terms</button> and <button className="underline hover:text-foreground" onClick={() => setLegal("privacy")}>Privacy</button> notice.
+          </p>
+        </div>
+      </div>
+      <footer className="border-t px-4 py-4 text-center text-[11px] text-muted-foreground">
+        <a href={REPO_URL} target="_blank" rel="noopener noreferrer" className="underline hover:text-foreground">Open source</a>
+        {" · "}<button className="underline hover:text-foreground" onClick={() => setLegal("terms")}>Terms</button>
+        {" · "}<button className="underline hover:text-foreground" onClick={() => setLegal("privacy")}>Privacy</button>
+      </footer>
+      {legal && <LegalDoc kind={legal} onClose={() => setLegal(null)} />}
+    </div>
+  );
+}
+
+function LegalDoc({ kind, onClose }: { kind: "terms" | "privacy"; onClose: () => void }) {
+  const content = kind === "terms" ? {
+    title: "Terms of use",
+    body: [
+      ["The service", "This is a personal agent: software that takes actions on your behalf — reading your connected data, messaging people, booking things, browsing the web — inside limits you control."],
+      ["You stay in control", "Actions that spend money or act as you require your explicit approval before they execute. You can pause the agent at any time with the kill switch; approvals expire; every execution is logged and auditable."],
+      ["Sandbox data", "Unless you connect real providers, flight inventory, payments, and calls run against simulated providers that perform no real-world action."],
+      ["Your responsibility", "You're responsible for actions you approve and for the credentials and provider accounts you connect. The agent discloses itself as an AI on calls and never acts outside the configured risk policy."],
+      ["No warranty", "This software is provided as-is, open source, without warranty of any kind."],
+    ],
+  } : {
+    title: "Privacy notice",
+    body: [
+      ["Your data", "Messages, memories, calendar, and connected-provider data are stored per-user and never shared across accounts. You can export everything (Open Memory Format) or delete it all, any time."],
+      ["Credentials", "Site logins and model keys you store are encrypted at rest (AES-256-GCM). They are used only to act for you and are never shown to the model or returned by any endpoint."],
+      ["Calls", "Call audio is never recorded — only transcripts are kept, and they live in your account's data."],
+      ["Model providers", "Your messages are sent to the configured model provider (e.g. Anthropic) to plan actions. With a your-own-key setup, requests go under your key only."],
+      ["Deletion", "Deleting a fact, a credential, or your whole memory removes it from the store. The reset control wipes your entire agent state."],
+    ],
+  };
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose} data-testid={`dialog-legal-${kind}`}>
+      <div className="max-h-[80dvh] w-full max-w-lg overflow-y-auto rounded-xl border bg-card p-6" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between"><h3 className="text-lg font-semibold">{content.title}</h3><button onClick={onClose} aria-label="Close"><X className="h-5 w-5 text-muted-foreground" /></button></div>
+        <div className="mt-4 space-y-4">
+          {content.body.map(([h, b]) => <div key={h}><div className="text-sm font-medium">{h}</div><p className="mt-0.5 text-[13px] leading-relaxed text-muted-foreground">{b}</p></div>)}
+        </div>
       </div>
     </div>
   );
@@ -999,10 +1082,10 @@ function PanelsTab({ state }: { state: StateSnapshot }) {
   );
 }
 
-function ControlPanel({ state }: { state: StateSnapshot }) {
+function ControlPanel({ state, tab, onTab }: { state: StateSnapshot; tab: string; onTab: (t: string) => void }) {
   const pendingCount = state.approvals.filter((a) => a.status === "pending").length;
   return (
-    <Tabs defaultValue="approvals" className="flex h-full min-h-0 flex-col">
+    <Tabs value={tab} onValueChange={onTab} className="flex h-full min-h-0 flex-col">
       <div className="border-b px-4 pt-3">
         <TabsList className="h-9 w-full justify-start overflow-x-auto bg-transparent p-0">
           <TabsTrigger value="approvals" className="px-2.5 data-[state=active]:bg-muted sm:px-3" data-testid="tab-approvals">
@@ -1013,7 +1096,7 @@ function ControlPanel({ state }: { state: StateSnapshot }) {
           <TabsTrigger value="data" className="px-2.5 data-[state=active]:bg-muted sm:px-3" data-testid="tab-data">Data</TabsTrigger>
           <TabsTrigger value="panels" className="px-2.5 data-[state=active]:bg-muted sm:px-3" data-testid="tab-panels">Panels</TabsTrigger>
           <TabsTrigger value="browser" className="px-2.5 data-[state=active]:bg-muted sm:px-3" data-testid="tab-browser">Browser</TabsTrigger>
-          <TabsTrigger value="policy" className="px-2.5 data-[state=active]:bg-muted sm:px-3" data-testid="tab-policy">Policy</TabsTrigger>
+          <TabsTrigger value="policy" className="px-2.5 data-[state=active]:bg-muted sm:px-3" data-testid="tab-policy">Settings</TabsTrigger>
         </TabsList>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto p-4">
@@ -1032,6 +1115,7 @@ function ControlPanel({ state }: { state: StateSnapshot }) {
 export default function AgentPage() {
   const { toast } = useToast();
   const [mobileView, setMobileView] = useState<"chat" | "control">("chat");
+  const [panelTab, setPanelTab] = useState("approvals");
   const { data: session, isLoading: sessionLoading } = useQuery<SessionInfo | null>({ queryKey: ["/api/auth/session"], queryFn: getQueryFn({ on401: "returnNull" }) });
   const signedIn = !!session && (session.singleUser || !!session.userId);
   const { data: state, isLoading, error } = useQuery<StateSnapshot>({ queryKey: ["/api/state"], refetchInterval: 2500, enabled: signedIn });
@@ -1097,6 +1181,16 @@ export default function AgentPage() {
             {state.settings.paused ? "Paused" : "Active"}
           </span>
         )}
+        {state?.settings.freeTierRemaining !== null && state?.settings.freeTierRemaining !== undefined && state?.settings.freeTierLimit !== null && (
+          <button
+            onClick={() => { setPanelTab("policy"); setMobileView("control"); }}
+            title={state.settings.freeTierRemaining <= 5 ? "Running low — add your own model key in Settings → Account for unlimited turns" : "Free plan — add your own model key in Settings → Account for unlimited turns"}
+            data-testid="pill-free-tier"
+            className={`hidden items-center gap-1 rounded-full border px-2 py-0.5 text-xs sm:inline-flex ${state.settings.freeTierRemaining <= 5 ? "border-[hsl(36_80%_32%/0.4)] text-[hsl(36_80%_32%)]" : "text-muted-foreground"}`}
+          >
+            <Sparkles className="h-3 w-3" />{state.settings.freeTierRemaining}/{state.settings.freeTierLimit} free
+          </button>
+        )}
         <div className="ml-auto flex items-center gap-1.5">
           <Button size="sm" variant="ghost" onClick={() => background.mutate()} disabled={background.isPending || !state} data-testid="button-background" className="hidden sm:inline-flex">
             <Sparkles className="mr-1 h-4 w-4" /> {background.isPending ? "Checking…" : "Background check"}
@@ -1130,7 +1224,7 @@ export default function AgentPage() {
         <main className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_440px]">
           <div className={`min-h-0 ${mobileView === "chat" ? "flex" : "hidden"} flex-col lg:flex`}><Conversation state={state} /></div>
           <aside className={`min-h-0 border-l bg-[hsl(40_18%_95%)] ${mobileView === "control" ? "flex" : "hidden"} flex-col lg:flex`} aria-label="Control panel">
-            <ControlPanel state={state} />
+            <ControlPanel state={state} tab={panelTab} onTab={setPanelTab} />
           </aside>
         </main>
       )}
