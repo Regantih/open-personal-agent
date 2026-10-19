@@ -61,6 +61,15 @@ export const FREE_PLANNER_TURNS_PER_DAY = Number(process.env.OPA_FREE_PLANNER_TU
 export async function freeTierRemaining(userId: string): Promise<number | null> {
   if (await resolveLlmAuth(userId)) return null; // BYOK: unlimited (their key, their bill)
   if (!process.env.ANTHROPIC_API_KEY && !process.env.ANTHROPIC_AUTH_TOKEN && !process.env.OPA_OPENAI_API_KEY) return null; // no platform key at all
-  const u = await storeFor(userId).usageToday("realtime");
-  return Math.max(0, FREE_PLANNER_TURNS_PER_DAY - u.turns);
+  const n = await storeFor(userId).userMessagesToday();
+  return Math.max(0, FREE_PLANNER_TURNS_PER_DAY - n);
+}
+
+// Gate check for the realtime lane. The inbound message is already stored when
+// this runs, so block only when today exceeds the allowance — the 25th message
+// still gets a reply.
+export async function freeTierExceeded(userId: string): Promise<boolean> {
+  if (await resolveLlmAuth(userId)) return false;
+  if (!process.env.ANTHROPIC_API_KEY && !process.env.ANTHROPIC_AUTH_TOKEN && !process.env.OPA_OPENAI_API_KEY) return false;
+  return (await storeFor(userId).userMessagesToday()) > FREE_PLANNER_TURNS_PER_DAY;
 }

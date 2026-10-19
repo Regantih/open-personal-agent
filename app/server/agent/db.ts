@@ -203,6 +203,7 @@ export interface Store {
   cancelSubscription(id: number): Promise<void>;
   seed(force?: boolean): Promise<void>;
   usageToday(lane: string): Promise<{ turns: number; inputTokens: number; outputTokens: number }>;
+  userMessagesToday(): Promise<number>;
   recordUsage(lane: string, model: string, inputTokens: number, outputTokens: number): Promise<void>;
   addCall(to: string, purpose: string): Promise<CallRow>;
   getCall(id: number): Promise<CallRow | undefined>;
@@ -416,6 +417,13 @@ export function storeFor(userId: string): Store {
       const start = new Date(); start.setHours(0, 0, 0, 0);
       const r = await drv.get<any>("SELECT COUNT(*) AS n, COALESCE(SUM(input_tokens),0) AS i, COALESCE(SUM(output_tokens),0) AS o FROM usage WHERE user_id = ? AND lane = ? AND ts >= ?", [u, lane, start.getTime()]);
       return { turns: Number(r?.n ?? 0), inputTokens: Number(r?.i ?? 0), outputTokens: Number(r?.o ?? 0) };
+    },
+    // One "turn" for billing purposes = one inbound user message, not one model
+    // call — tool loops and integrity retries are our cost, not the user's.
+    async userMessagesToday() {
+      const start = new Date(); start.setHours(0, 0, 0, 0);
+      const r = await drv.get<any>("SELECT COUNT(*) AS n FROM messages WHERE user_id = ? AND role = 'user' AND created_at >= ?", [u, start.getTime()]);
+      return Number(r?.n ?? 0);
     },
 
     // ----- outbound calls -----

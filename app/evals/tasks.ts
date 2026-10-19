@@ -823,8 +823,14 @@ export const tasks: EvalTask[] = [
           const u = await h.db.storeFor(a.id).usageToday("realtime");
           if (u.turns !== 2 || u.inputTokens !== 140) throw new Error(`usage misrecorded: ${JSON.stringify(u)}`);
           if ((await h.db.storeFor(b.id).usageToday("realtime")).turns !== 0) throw new Error("usage leaked to bob");
+          // Free tier counts inbound user messages, not model calls — tool
+          // loops and integrity retries are our cost, not the user's.
+          await h.db.storeFor(a.id).addMessage("user", "web", "hi");
+          await h.db.storeFor(a.id).addMessage("user", "web", "hi again");
           const left = await h.keys.freeTierRemaining(a.id);
-          if (left === null || left >= h.keys.FREE_PLANNER_TURNS_PER_DAY) throw new Error("free tier did not count down");
+          if (left !== h.keys.FREE_PLANNER_TURNS_PER_DAY - 2) throw new Error(`free tier miscounted messages: left=${left}`);
+          if (await h.keys.freeTierExceeded(a.id)) throw new Error("exceeded before the cap");
+          if ((await h.keys.freeTierRemaining(b.id)) !== h.keys.FREE_PLANNER_TURNS_PER_DAY) throw new Error("free tier leaked to bob");
         },
       },
     ],

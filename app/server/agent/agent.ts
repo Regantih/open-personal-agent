@@ -9,7 +9,7 @@ import { signMandate, verifyMandate } from "./vault";
 import { complete, providerName, type CallAuth, type CanonicalMessage, type ModelToolSchema } from "./llm";
 import { startTrace } from "./tracing";
 import { emit } from "./bus";
-import { freeTierRemaining, resolveLlmAuth } from "./keys";
+import { freeTierExceeded, resolveLlmAuth } from "./keys";
 import type { Approval } from "@shared/schema";
 
 // Model router: frontier model for real-time planning, small model for background (batch lane) work.
@@ -140,8 +140,7 @@ export async function runAgent(ctx: Ctx, userText: string, channel: string, refe
   // BYOK: a stored key rides on every call. Without one, the free tier caps
   // planner turns/day; the batch lane is unaffected (always platform model).
   const auth: CallAuth | undefined = (await resolveLlmAuth(ctx.userId)) ?? undefined;
-  const remaining = await freeTierRemaining(ctx.userId);
-  if (remaining !== null && remaining <= 0) {
+  if (await freeTierExceeded(ctx.userId)) {
     return {
       text: `You've used today's ${Number(process.env.OPA_FREE_PLANNER_TURNS || 25)} free messages. Add your own model key in Settings (Keys) to keep going — it stays encrypted on this server and is used only for your requests.`,
       trace: null,
@@ -291,7 +290,7 @@ function formatExecution(a: Approval, r: any): string {
   if (a.tool === "book_flight") return `Booked: ${a.summary}. Paid with a ${r.paid_with}. It's on your calendar. (Sandbox booking.)`;
   if (a.tool === "cancel_subscription") return r.already_cancelled ? "That subscription was already cancelled." : `Cancelled ${r.cancelled}. That saves about $${r.saves_per_year_usd} a year. (Simulated cancellation.)`;
   if (a.tool === "send_email") return `Sent your email to ${r.to}. (${r.delivery})`;
-  return `Done: ${a.summary}.`;
+  return `Done: ${a.summary.replace(/[.\s]+$/, "")}.`;
 }
 
 // ---------- inbound handling: deterministic commands first, then the model ----------

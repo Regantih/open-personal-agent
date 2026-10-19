@@ -432,6 +432,7 @@ export const tools: ToolDef[] = [
       const body = String(i.body).slice(0, 480);
       if (i.channel === "sms") {
         const { delivery } = await smsSender().send(to, body);
+        await ctx.store.addOutbox(to, `Text: "${body.slice(0, 60)}${body.length > 60 ? "…" : ""}"`, body, "sent");
         await ctx.store.logEvent("message_out", `SMS to contact ${to}: ${body.slice(0, 80)}`, { channel: "sms", delivery });
         return { sent: true, channel: "sms", to, delivery };
       }
