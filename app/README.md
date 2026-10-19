@@ -1,6 +1,6 @@
-# Open Personal Agent: Reference App (v0.2)
+# Asta — Open Personal Agent Reference App (v0.2)
 
-A working, minimal personal agent you text. It plans with a frontier model, runs every action through the [Risk Policy](../spec/risk-policy/), asks before it spends money or acts as you, and stores memory you can export as [Open Memory Format](../spec/open-memory-format/).
+**Asta** is a working, minimal personal agent you text. It plans with a frontier model, runs every action through the [Risk Policy](../spec/risk-policy/), asks before it spends money or acts as you, and stores memory you can export as [Open Memory Format](../spec/open-memory-format/).
 
 This is a reference implementation of the [playbook](../docs/). It is small on purpose, so you can read all of it in an afternoon and replace any part.
 

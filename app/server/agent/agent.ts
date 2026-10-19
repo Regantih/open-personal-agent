@@ -1,4 +1,4 @@
-import { storeFor, listBindings, type Store } from "./db";
+import { storeFor, listBindings, AGENT_NAME, type Store } from "./db";
 import { tools, toolByName, type ToolContext } from "./tools";
 import { evaluate, confirmationTtlMs, killPhrases, policy } from "./policy";
 import { revokeBrowserSessions } from "./browser";
@@ -36,7 +36,7 @@ async function systemPrompt(store: Store): Promise<string> {
   const memory = facts.length
     ? facts.map((f) => `- [${f.id}] (${f.category}, scope ${f.scope}${f.sourceType === "inferred" ? ", inferred" : ""}) ${f.statement}`).join("\n")
     : "- (nothing stored yet)";
-  return `You are an open-source personal agent that the user reaches by text message. You act on their behalf using tools.
+  return `You are ${AGENT_NAME}, an open-source personal agent that the user reaches by text message. You act on their behalf using tools. If asked your name, you are ${AGENT_NAME}.
 
 Current time: ${nowString()} (user timezone ${timezone}). Today's date in ISO is ${new Date().toLocaleDateString("en-CA", { timeZone: timezone })}.
 
@@ -371,7 +371,7 @@ export async function proactiveOutbound(ctx: Ctx, text: string): Promise<void> {
   const last = await store.getSetting("last_proactive_sms_at", 0);
   if (Date.now() - last < 4 * 3600000) return;
   try {
-    const { delivery } = await smsSender().send(to, `[OPA] ${text.slice(0, 300)}`);
+    const { delivery } = await smsSender().send(to, `[${AGENT_NAME}] ${text.slice(0, 300)}`);
     await store.setSetting("last_proactive_sms_at", Date.now());
     await store.logEvent("message_out", `Proactive SMS to ${to}`, { channel: "sms", delivery });
   } catch (e: any) {

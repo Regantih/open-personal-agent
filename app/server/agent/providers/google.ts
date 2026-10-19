@@ -1,7 +1,7 @@
 import { createHmac, randomBytes } from "node:crypto";
 import { readUserKey, saveUserKey, deleteUserKey } from "../keys";
 import { masterKey } from "../keys";
-import { saveProviderConnection, getProviderConnection, deleteProviderConnection } from "../db";
+import { saveProviderConnection, getProviderConnection, deleteProviderConnection, AGENT_NAME } from "../db";
 
 // Google provider: OAuth2 + Calendar + Gmail, plain fetch (no googleapis dep).
 //
@@ -156,7 +156,7 @@ export async function gcalInsert(userId: string, ev: { title: string; start: num
   const data = await gfetch(userId, `${CAL_API}/calendars/primary/events`, {
     method: "POST",
     body: JSON.stringify({
-      summary: ev.title, location: ev.location ?? undefined, description: ev.description ?? "Created by Open Personal Agent",
+      summary: ev.title, location: ev.location ?? undefined, description: ev.description ?? `Created by ${AGENT_NAME}`,
       start: { dateTime: new Date(ev.start).toISOString() }, end: { dateTime: new Date(ev.end).toISOString() },
       transparency: "transparent", // a hold doesn't block the calendar
     }),

@@ -1,4 +1,4 @@
-import { updateCall, updateCallByRef, getCallByRef } from "./db";
+import { updateCall, updateCallByRef, getCallByRef, AGENT_NAME } from "./db";
 import WebSocket from "ws";
 
 // Voice call lane — the agent can place real outbound calls (the "agent-owned
@@ -38,7 +38,7 @@ export function normalizePhone(raw: string): string {
 
 /** The line every call opens with. Required by the risk policy. */
 export function aiDisclosure(userLabel: string): string {
-  return `Hi — this is an automated assistant calling on behalf of ${userLabel}. I'm an AI, not a person.`;
+  return `Hi — this is ${AGENT_NAME}, an automated assistant calling on behalf of ${userLabel}. I'm an AI, not a person.`;
 }
 
 // ---------- simulated ----------

@@ -21,6 +21,7 @@ import { emit } from "./bus";
 //              Note: "end" is quoted everywhere — it is a reserved word in pg.
 
 export const LOCAL_USER = "local";
+export const AGENT_NAME = process.env.OPA_AGENT_NAME || "Asta";
 export const multiUser = () => process.env.OPA_MULTI_USER === "1";
 export const PLATFORM = "_platform";
 export const usingPostgres = !!process.env.DATABASE_URL;
@@ -464,7 +465,7 @@ export function storeFor(userId: string): Store {
   return store;
 }
 
-const WELCOME_MESSAGE = "Hi, I'm your open personal agent. Text me like you would a person: plan travel, check your calendar and inbox, audit subscriptions, or ask me to remember things. Anything that spends money or acts as you needs your approval first.";
+const WELCOME_MESSAGE = `Hi, I'm ${AGENT_NAME} — your personal agent. Text me like you would a person: plan travel, check your calendar and inbox, audit subscriptions, or ask me to remember things. Anything that spends money or acts as you needs your approval first.`;
 
 export const DEFAULT_SUGGESTIONS: ActionSuggestion[] = [
   { label: "Calendar this week", prompt: "What's on my calendar this week?" },

@@ -5,6 +5,7 @@ import {
 } from "./agent/db";
 import { emailSender } from "./agent/email";
 import { smsSender } from "./agent/sms";
+import { AGENT_NAME } from "./agent/db";
 
 // Passwordless auth: email magic links and phone OTPs. Sessions are opaque
 // tokens in an httpOnly cookie; only the SHA-256 of the token is stored.
@@ -65,7 +66,7 @@ export async function postMagicLink(req: Request, res: Response) {
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ message: "Valid email required" });
   const { raw } = await createAuthToken("magic", email);
   const link = `${publicBase(req)}/api/auth/verify?token=${raw}`;
-  const sent = await emailSender().send(email, "Your Open Personal Agent sign-in link", `Sign in: ${link}\n\nThis link works once and expires in 15 minutes.`);
+  const sent = await emailSender().send(email, `Your ${AGENT_NAME} sign-in link`, `Sign in: ${link}\n\nThis link works once and expires in 15 minutes.`);
   // With the simulated sender there is no real email — surface the link so the
   // flow still works in dev and demo environments.
   const simulated = emailSender().name === "simulated-outbox";
@@ -90,7 +91,7 @@ export async function postPhoneRequest(req: Request, res: Response) {
   if (!/^\+?\d[\d\s-]{6,}$/.test(phone)) return res.status(400).json({ message: "Valid phone required (E.164 preferred)" });
   const norm = phone.replace(/[^\d+]/g, "");
   const { raw } = await createAuthToken("otp", norm);
-  const sent = await smsSender().send(norm, `Your Open Personal Agent code is ${raw}. It expires in 15 minutes.`);
+  const sent = await smsSender().send(norm, `Your ${AGENT_NAME} code is ${raw}. It expires in 15 minutes.`);
   const simulated = smsSender().name === "simulated-sms";
   res.json({ sent: sent.delivery, ...(simulated ? { devCode: raw } : {}) });
 }
@@ -127,14 +128,14 @@ export async function postBindStart(req: Request, res: Response) {
   if (channel === "sms") {
     const norm = address.replace(/[^\d+]/g, "");
     const { raw } = await createAuthToken("bind_sms", norm, uid);
-    const sent = await smsSender().send(norm, `Code ${raw} links this number to your Open Personal Agent account.`);
+    const sent = await smsSender().send(norm, `Code ${raw} links this number to your ${AGENT_NAME} account.`);
     return res.json({ sent: sent.delivery, ...(smsSender().name === "simulated-sms" ? { devCode: raw } : {}) });
   }
   const email = address.toLowerCase();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ message: "Valid email required" });
   const { raw } = await createAuthToken("bind_email", email, uid);
   const link = `${publicBase(req)}/api/channels/bind/verify?token=${raw}&email=${encodeURIComponent(email)}`;
-  const sent = await emailSender().send(email, "Link this email to your Open Personal Agent", `Confirm: ${link}\n\nExpires in 15 minutes.`);
+  const sent = await emailSender().send(email, `Link this email to ${AGENT_NAME}`, `Confirm: ${link}\n\nExpires in 15 minutes.`);
   return res.json({ sent: sent.delivery, ...(emailSender().name === "simulated-outbox" ? { devLink: link } : {}) });
 }
 

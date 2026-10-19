@@ -213,7 +213,7 @@ function Conversation({ state }: { state: StateSnapshot }) {
           {state.messages.length === 0 && !pendingText && (
             <div className="mt-8 rounded-2xl border bg-card p-6 text-center" data-testid="card-welcome">
               <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-full border bg-accent"><Sparkles className="h-5 w-5 text-primary" /></div>
-              <h2 className="mt-3 text-lg font-semibold tracking-tight">Your agent is listening</h2>
+              <h2 className="mt-3 text-lg font-semibold tracking-tight">Asta is listening</h2>
               <p className="mx-auto mt-1 max-w-sm text-sm leading-relaxed text-muted-foreground">
                 Text it like a person — plan a trip, audit subscriptions, have it call someone, or just ask it to remember things.
               </p>
@@ -706,7 +706,7 @@ function SignIn() {
     <div className="flex min-h-[100dvh] flex-col bg-background">
       <div className="mx-auto flex w-full max-w-5xl flex-1 flex-col items-center justify-center gap-10 px-4 py-10 lg:flex-row lg:gap-16">
         <div className="max-w-md lg:flex-1">
-          <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Open Personal Agent</h1>
+          <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Asta</h1>
           <p className="mt-3 text-[15px] leading-relaxed text-muted-foreground">
             A personal agent that lives in your text messages — and does the work. It plans trips, calls the restaurant, chases the email, and remembers what matters. Everything consequential asks you first.
           </p>
@@ -1172,7 +1172,7 @@ export default function AgentPage() {
     <div className="flex h-[100dvh] flex-col bg-background text-foreground">
       <header className="flex h-14 shrink-0 items-center gap-3 border-b px-4 sm:px-6">
         <div className="flex min-w-0 items-baseline gap-2">
-          <h1 className="truncate text-[15px] font-semibold tracking-tight sm:text-base" data-testid="text-app-title">Open Personal Agent</h1>
+          <h1 className="truncate text-[15px] font-semibold tracking-tight sm:text-base" data-testid="text-app-title">Asta</h1>
           <span className="hidden font-mono text-xs text-muted-foreground sm:inline">v0.2</span>
         </div>
         {state && (
