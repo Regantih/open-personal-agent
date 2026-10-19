@@ -60,24 +60,28 @@ export async function getSession(req: Request, res: Response) {
   res.json({ userId: uid, singleUser: false, email: u?.email ?? null, phone: u?.phone ?? null });
 }
 
+// On-screen sign-in links/codes bypass proof of inbox or number ownership — on a
+// multi-user deployment anyone could sign in as anyone. They are only ever
+// returned when explicitly opted in (OPA_DEV_AUTH=1) or in single-user mode.
+const devAuth = () => process.env.OPA_DEV_AUTH === "1" || !multiUser();
+
 // POST /api/auth/magic-link { email }
 export async function postMagicLink(req: Request, res: Response) {
   const email = String(req.body?.email || "").trim().toLowerCase();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ message: "Valid email required" });
+  const simulated = emailSender().name === "simulated-outbox";
+  if (simulated && !devAuth()) return res.status(503).json({ message: "Sign-in email isn't configured on this deployment yet — the operator needs to set RESEND_API_KEY or SMTP_URL." });
   const { raw } = await createAuthToken("magic", email);
   const link = `${publicBase(req)}/api/auth/verify?token=${raw}`;
   const sent = await emailSender().send(email, `Your ${AGENT_NAME} sign-in link`, `Sign in: ${link}\n\nThis link works once and expires in 15 minutes.`);
-  // With the simulated sender there is no real email — surface the link so the
-  // flow still works in dev and demo environments.
-  const simulated = emailSender().name === "simulated-outbox";
-  res.json({ sent: sent.delivery, ...(simulated ? { devLink: link } : {}) });
+  res.json({ sent: sent.delivery, ...(simulated && devAuth() ? { devLink: link } : {}) });
 }
 
 // GET /api/auth/verify?token=... — consumes a magic link, creates the session.
 export async function getVerify(req: Request, res: Response) {
   const token = String(req.query.token || "");
   const hit = token ? await consumeAuthToken("magic", "", token) : null;
-  if (!hit) return res.status(400).send("That link is invalid or expired. Request a new one.");
+  if (!hit) return res.redirect("/?auth=expired");
   const email = hit.subject;
   const user = await findOrCreateUser({ email });
   await bindChannel(user.id, "email", email);
@@ -90,10 +94,11 @@ export async function postPhoneRequest(req: Request, res: Response) {
   const phone = String(req.body?.phone || "").trim();
   if (!/^\+?\d[\d\s-]{6,}$/.test(phone)) return res.status(400).json({ message: "Valid phone required (E.164 preferred)" });
   const norm = phone.replace(/[^\d+]/g, "");
+  const simulated = smsSender().name === "simulated-sms";
+  if (simulated && !devAuth()) return res.status(503).json({ message: "Text sign-in isn't configured on this deployment yet — the operator needs Twilio credentials." });
   const { raw } = await createAuthToken("otp", norm);
   const sent = await smsSender().send(norm, `Your ${AGENT_NAME} code is ${raw}. It expires in 15 minutes.`);
-  const simulated = smsSender().name === "simulated-sms";
-  res.json({ sent: sent.delivery, ...(simulated ? { devCode: raw } : {}) });
+  res.json({ sent: sent.delivery, ...(simulated && devAuth() ? { devCode: raw } : {}) });
 }
 
 // POST /api/auth/phone/verify { phone, code } — sign in by phone.
@@ -127,16 +132,20 @@ export async function postBindStart(req: Request, res: Response) {
   if (!address) return res.status(400).json({ message: "address required" });
   if (channel === "sms") {
     const norm = address.replace(/[^\d+]/g, "");
+    const simulated = smsSender().name === "simulated-sms";
+    if (simulated && !devAuth()) return res.status(503).json({ message: "SMS isn't configured on this deployment — can't verify number ownership." });
     const { raw } = await createAuthToken("bind_sms", norm, uid);
     const sent = await smsSender().send(norm, `Code ${raw} links this number to your ${AGENT_NAME} account.`);
-    return res.json({ sent: sent.delivery, ...(smsSender().name === "simulated-sms" ? { devCode: raw } : {}) });
+    return res.json({ sent: sent.delivery, ...(simulated && devAuth() ? { devCode: raw } : {}) });
   }
   const email = address.toLowerCase();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ message: "Valid email required" });
+  const simulated = emailSender().name === "simulated-outbox";
+  if (simulated && !devAuth()) return res.status(503).json({ message: "Email isn't configured on this deployment — can't verify address ownership." });
   const { raw } = await createAuthToken("bind_email", email, uid);
   const link = `${publicBase(req)}/api/channels/bind/verify?token=${raw}&email=${encodeURIComponent(email)}`;
   const sent = await emailSender().send(email, `Link this email to ${AGENT_NAME}`, `Confirm: ${link}\n\nExpires in 15 minutes.`);
-  return res.json({ sent: sent.delivery, ...(emailSender().name === "simulated-outbox" ? { devLink: link } : {}) });
+  return res.json({ sent: sent.delivery, ...(simulated ? { devLink: link } : {}) });
 }
 
 export async function postBindVerify(req: Request, res: Response) {

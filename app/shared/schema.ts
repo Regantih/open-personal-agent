@@ -26,6 +26,7 @@ export interface AgentEvent {
     | "memory"
     | "kill_switch"
     | "provider"
+    | "integrity"
     | "error";
   summary: string;
   data: Record<string, unknown> | null;

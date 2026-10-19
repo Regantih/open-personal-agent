@@ -301,14 +301,14 @@ const eventIcon: Record<AgentEvent["type"], JSX.Element> = {
   model_call: <Cpu className="h-3.5 w-3.5" />, tool_call: <Wrench className="h-3.5 w-3.5" />, policy: <ShieldCheck className="h-3.5 w-3.5" />,
   approval: <KeyRound className="h-3.5 w-3.5" />, execution: <Check className="h-3.5 w-3.5" />, memory: <Brain className="h-3.5 w-3.5" />,
   kill_switch: <OctagonX className="h-3.5 w-3.5" />, error: <CircleAlert className="h-3.5 w-3.5" />,
-  provider: <Link2 className="h-3.5 w-3.5" />,
+  provider: <Link2 className="h-3.5 w-3.5" />, integrity: <ShieldCheck className="h-3.5 w-3.5" />,
 };
 const eventTone: Partial<Record<AgentEvent["type"], string>> = {
-  policy: "text-primary", approval: "text-[hsl(36_80%_34%)]", execution: "text-primary", kill_switch: "text-destructive", error: "text-destructive", model_call: "text-[hsl(222_40%_40%)]",
+  policy: "text-primary", approval: "text-[hsl(36_80%_34%)]", execution: "text-primary", kill_switch: "text-destructive", error: "text-destructive", integrity: "text-destructive", model_call: "text-[hsl(222_40%_40%)]",
 };
 const FILTERS: { id: string; label: string; types: AgentEvent["type"][] | null }[] = [
   { id: "all", label: "All", types: null },
-  { id: "policy", label: "Policy", types: ["policy", "approval", "execution", "kill_switch"] },
+  { id: "policy", label: "Policy", types: ["policy", "approval", "execution", "kill_switch", "integrity"] },
   { id: "models", label: "Models", types: ["model_call"] },
   { id: "tools", label: "Tools", types: ["tool_call", "error"] },
   { id: "memory", label: "Memory", types: ["memory"] },
@@ -695,6 +695,13 @@ function SignIn() {
 
   const [legal, setLegal] = useState<"terms" | "privacy" | null>(null);
 
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("auth") === "expired") {
+      toast({ title: "That sign-in link is invalid or expired", description: "Request a new one below — links work once and expire in 15 minutes.", variant: "destructive" });
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+  }, []);
+
   const FEATURES = [
     { icon: Sparkles, title: "Does things, not just answers", body: "Books flights, calls businesses, texts people, watches your inbox and calendar." },
     { icon: ShieldCheck, title: "Asks before it acts", body: "Anything that spends money or acts as you shows an approval card first — a signed mandate executes it." },
@@ -731,7 +738,7 @@ function SignIn() {
         {mode === "email" ? (
           <div className="mt-4 space-y-2">
             <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" data-testid="input-auth-email" />
-            <Button className="w-full" onClick={() => magic.mutate()} disabled={!/@/.test(email) || magic.isPending} data-testid="button-send-link">
+            <Button className="w-full" onClick={() => magic.mutate()} disabled={!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || magic.isPending} data-testid="button-send-link">
               {magic.isPending ? "Sending…" : "Email me a sign-in link"}
             </Button>
             {stage === "sent" && (
