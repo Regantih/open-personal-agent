@@ -42,15 +42,35 @@ export function aiDisclosure(userLabel: string): string {
 }
 
 // ---------- simulated ----------
+// Default: completes instantly (deterministic for evals). With
+// OPA_SIMULATED_CALL_REALTIME=1 the call runs a paced lifecycle —
+// ringing -> in_progress -> transcript lines appearing one by one ->
+// completed — so demos and dev show the real-time flow the Twilio path has.
+function simulatedRealtime(): boolean {
+  return process.env.OPA_SIMULATED_CALL_REALTIME === "1";
+}
 const simulatedProvider: CallProvider = {
   name: "simulated",
   async start(userId, callId, to, purpose) {
-    const transcript: CallTranscriptLine[] = [
+    const lines: CallTranscriptLine[] = [
       { speaker: "agent", text: aiDisclosure("the account owner"), at: Date.now() },
       { speaker: "agent", text: `I'm calling about: ${purpose}`, at: Date.now() },
       { speaker: "callee", text: "(simulated line — set TWILIO_* env vars for a real call)", at: Date.now() },
     ];
-    await updateCall(callId, { status: "completed", providerRef: `sim_${callId}`, transcript, outcome: "simulated — no audio dialled", endedAt: Date.now() });
+    if (!simulatedRealtime()) {
+      await updateCall(callId, { status: "completed", providerRef: `sim_${callId}`, transcript: lines, outcome: "simulated — no audio dialled", endedAt: Date.now() });
+      return { providerRef: `sim_${callId}` };
+    }
+    const transcript: CallTranscriptLine[] = [];
+    const step = (ms: number, fn: () => Promise<void>) => setTimeout(() => { void fn(); }, ms).unref?.();
+    void updateCall(callId, { status: "queued", providerRef: `sim_${callId}` });
+    step(1500, () => updateCall(callId, { status: "ringing" }));
+    step(3500, () => updateCall(callId, { status: "in_progress" }));
+    lines.forEach((l, i) => step(4500 + i * 3000, async () => {
+      transcript.push({ ...l, at: Date.now() });
+      await updateCall(callId, { transcript: [...transcript] });
+    }));
+    step(4500 + lines.length * 3000, () => updateCall(callId, { status: "completed", outcome: "simulated — no audio dialled", endedAt: Date.now() }));
     return { providerRef: `sim_${callId}` };
   },
 };

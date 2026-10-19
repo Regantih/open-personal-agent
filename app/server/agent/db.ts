@@ -4,6 +4,7 @@ import { createHash, randomBytes } from "node:crypto";
 import type {
   ActionSuggestion, AgentEvent, Approval, Booking, CalendarItem, Fact, InboxEmail, Message, Outbox, Subscription,
 } from "@shared/schema";
+import { emit } from "./bus";
 
 // Storage layer.
 //
@@ -261,6 +262,7 @@ export function storeFor(userId: string): Store {
     },
     async logEvent(type, summary, data = null) {
       await drv.run("INSERT INTO events (user_id, ts, type, summary, data) VALUES (?, ?, ?, ?, ?)", [u, Date.now(), type, summary, data ? JSON.stringify(data) : null]);
+      emit(u, { type: "event", eventType: type, summary });
     },
     async listEvents(limit = 300) {
       return (await drv.all<any>("SELECT * FROM events WHERE user_id = ? ORDER BY id DESC LIMIT ?", [u, limit])).map((e) => ({
@@ -683,6 +685,8 @@ export async function updateCall(id: number, patch: { status?: string; providerR
   if (patch.transcript !== undefined) await drv.run("UPDATE calls SET transcript = ? WHERE id = ?", [JSON.stringify(patch.transcript), id]);
   if (patch.outcome !== undefined) await drv.run("UPDATE calls SET outcome = ? WHERE id = ?", [patch.outcome, id]);
   if (patch.endedAt !== undefined) await drv.run("UPDATE calls SET ended_at = ? WHERE id = ?", [patch.endedAt, id]);
+  const row = await drv.get<any>("SELECT user_id FROM calls WHERE id = ?", [id]);
+  if (row) emit(row.user_id, { type: "call", callId: id, ...patch });
 }
 export async function updateCallByRef(providerRef: string, patch: { status?: string; transcript?: unknown[] | null; outcome?: string; endedAt?: number }): Promise<boolean> {
   const c = await getCallByRef(providerRef);

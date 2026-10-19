@@ -12,6 +12,7 @@ import { models, ctxFor, type Ctx } from "./agent/agent";
 import { orchestrator, orchestratorName } from "./agent/orchestrator";
 import { providerName } from "./agent/llm";
 import { tracingEnabled } from "./agent/tracing";
+import { subscribe } from "./agent/bus";
 import { emailSender, emailInboundConfigured, normalizeInbound, validInboundEmailAuth, isAgentAddressed, bareAddress } from "./agent/email";
 import { policy, policyPath, limits } from "./agent/policy";
 import { exportOMF, importOMF } from "./agent/omf";
@@ -269,6 +270,19 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   const ctx = (req: Request): Ctx => ctxFor((req as any).userId);
 
   app.get("/api/state", async (req, res) => res.json(await snapshot(ctx(req))));
+
+  // Server-sent events: the client subscribes once and state changes (new
+  // events, call status/transcript updates, assistant reply deltas) push live
+  // instead of waiting for the state poll. Payloads are tiny signals — the
+  // client refetches /api/state for anything heavy.
+  app.get("/api/events", (req, res) => {
+    const uid = (req as any).userId;
+    res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
+    res.write(": connected\n\n");
+    const unsub = subscribe(uid, (e) => res.write(`data: ${JSON.stringify(e)}\n\n`));
+    const beat = setInterval(() => res.write(": ping\n\n"), 25_000);
+    req.on("close", () => { clearInterval(beat); unsub(); });
+  });
 
   app.post("/api/messages", async (req, res) => {
     const parsed = sendMessageSchema.safeParse(req.body);

@@ -8,6 +8,7 @@ import { anticipate, type Anticipation } from "./anticipate";
 import { signMandate, verifyMandate } from "./vault";
 import { complete, providerName, type CallAuth, type CanonicalMessage, type ModelToolSchema } from "./llm";
 import { startTrace } from "./tracing";
+import { emit } from "./bus";
 import { freeTierRemaining, resolveLlmAuth } from "./keys";
 import type { Approval } from "@shared/schema";
 
@@ -160,6 +161,7 @@ export async function runAgent(ctx: Ctx, userText: string, channel: string, refe
     lf?.generation("plan", { model: models.planner, startTime: new Date(started).toISOString(), endTime: new Date().toISOString(), input: userText, output: resp.text || `${resp.toolCalls.length} tool call(s)`, usage: { input: resp.inputTokens, output: resp.outputTokens } });
     if (!resp.toolCalls.length) {
       lf?.end({ output: resp.text || "Done." });
+      streamSay(ctx.userId, resp.text || "Done.");
       return { text: resp.text || "Done.", trace: trace.length ? trace.join(", ") : "none" };
     }
     messages.push({ role: "assistant", content: resp.assistantBlocks });
@@ -174,7 +176,26 @@ export async function runAgent(ctx: Ctx, userText: string, channel: string, refe
     messages.push({ role: "user", content: results });
   }
   lf?.end({ output: "step limit reached" });
-  return { text: "I hit my step limit on that one. Could you narrow it down?", trace: trace.join(", ") };
+  const text = "I hit my step limit on that one. Could you narrow it down?";
+  streamSay(ctx.userId, text);
+  return { text, trace: trace.join(", ") };
+}
+
+// Emit the reply to web clients in small chunks over SSE so it types out like
+// a real stream. Fire-and-forget: the HTTP response and message persistence
+// don't wait on it, and clients without an SSE connection just see the message
+// on the next poll. ~90 chars/sec.
+function streamSay(userId: string, text: string): void {
+  emit(userId, { type: "assistant_delta", delta: "", reset: true });
+  const chunk = 4;
+  let at = 0;
+  const tick = () => {
+    if (at >= text.length) { emit(userId, { type: "assistant_done" }); return; }
+    emit(userId, { type: "assistant_delta", delta: text.slice(at, at + chunk) });
+    at += chunk;
+    setTimeout(tick, 45);
+  };
+  setTimeout(tick, 45);
 }
 
 // ---------- approvals (decided by the user, never by the model) ----------

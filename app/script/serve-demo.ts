@@ -10,6 +10,9 @@
 process.env.OPA_DB_PATH = process.env.OPA_DB_PATH || "demo5.db";
 const PORT = Number(process.env.PORT || 5199);
 process.env.PUBLIC_BASE_URL = `http://127.0.0.1:${PORT}`;
+// Simulated calls pace like real ones (ringing -> transcript -> completed)
+// so recordings show the live call flow instead of an instant transcript.
+process.env.OPA_SIMULATED_CALL_REALTIME = process.env.OPA_SIMULATED_CALL_REALTIME || "1";
 
 import express from "express";
 import { createServer } from "node:http";

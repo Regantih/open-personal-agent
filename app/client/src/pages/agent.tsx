@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest, getQueryFn, queryClient, API_BASE } from "@/lib/queryClient";
 import type { ActionSuggestion, AgentEvent, Approval, Fact, Message, PanelWidget, Settings, StateSnapshot, Tier } from "@shared/schema";
@@ -110,6 +110,12 @@ function ApprovalCard({ a, compact = false }: { a: Approval; compact?: boolean }
   );
 }
 
+// Live reply stream: /api/events pushes assistant_delta chunks while a turn
+// runs so the reply types out like a real stream instead of appearing whole.
+const replyStream = { text: "", listeners: new Set<() => void>() };
+const replyStreamNotify = () => replyStream.listeners.forEach((f) => f());
+const subscribeStream = (cb: () => void) => { replyStream.listeners.add(cb); return () => { replyStream.listeners.delete(cb); }; };
+
 function MessageBubble({ m }: { m: Message }) {
   const mine = m.role === "user";
   return (
@@ -139,6 +145,7 @@ function Conversation({ state }: { state: StateSnapshot }) {
   const { toast } = useToast();
   const [text, setText] = useState("");
   const [pendingText, setPendingText] = useState<string | null>(null);
+  const streaming = useSyncExternalStore(subscribeStream, () => replyStream.text);
   const [listening, setListening] = useState(false);
   const [speakReplies, setSpeakReplies] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -209,11 +216,20 @@ function Conversation({ state }: { state: StateSnapshot }) {
               {!pendingCommitted && (
                 <div className="flex justify-end"><div className="max-w-[75%] rounded-2xl rounded-br-md bg-foreground px-3.5 py-2.5 text-sm text-background opacity-70"><span className="bubble-text">{pendingText}</span></div></div>
               )}
-              <div className="flex items-center gap-2 text-sm text-muted-foreground" data-testid="status-thinking">
-                <span className="flex gap-1"><span className="h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground [animation-delay:-0.2s]" /><span className="h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground [animation-delay:-0.1s]" /><span className="h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground" /></span>
-                Working: planning, checking policy, calling tools
-              </div>
+              {!streaming && (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground" data-testid="status-thinking">
+                  <span className="flex gap-1"><span className="h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground [animation-delay:-0.2s]" /><span className="h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground [animation-delay:-0.1s]" /><span className="h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground" /></span>
+                  Working: planning, checking policy, calling tools
+                </div>
+              )}
             </>
+          )}
+          {streaming && (
+            <div className="flex justify-start" data-testid="row-message-streaming">
+              <div className="max-w-[85%] sm:max-w-[75%]">
+                <div className="rounded-2xl rounded-bl-md border bg-card px-3.5 py-2.5 text-sm"><span className="bubble-text">{streaming}</span><span className="ml-0.5 inline-block h-3.5 w-1.5 animate-pulse bg-foreground/40 align-middle" /></div>
+              </div>
+            </div>
           )}
           <div ref={endRef} />
         </div>
@@ -1034,6 +1050,28 @@ export default function AgentPage() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/state"] }),
   });
   const pendingCount = useMemo(() => state?.approvals.filter((a) => a.status === "pending").length ?? 0, [state]);
+
+  // Live push: /api/events streams assistant deltas (reply typing) and state
+  // signals (events, call status/transcript) — state refetches debounce to
+  // ~4/sec; the 2.5s poll stays as the fallback for SSE-less environments.
+  useEffect(() => {
+    if (!signedIn) return;
+    const es = new EventSource(`${API_BASE}/api/events`, { withCredentials: true });
+    let t: ReturnType<typeof setTimeout> | null = null;
+    const invalidate = () => {
+      if (t) return;
+      t = setTimeout(() => { t = null; queryClient.invalidateQueries({ queryKey: ["/api/state"] }); }, 250);
+    };
+    es.onmessage = (msg) => {
+      try {
+        const e = JSON.parse(msg.data);
+        if (e.type === "assistant_delta") { replyStream.text = e.reset ? String(e.delta ?? "") : replyStream.text + String(e.delta ?? ""); replyStreamNotify(); }
+        else if (e.type === "assistant_done") { replyStream.text = ""; replyStreamNotify(); invalidate(); }
+        else invalidate();
+      } catch { /* malformed frame */ }
+    };
+    return () => { es.close(); if (t) clearTimeout(t); };
+  }, [signedIn]);
 
   // OAuth redirect landing: ?connected=google / ?connect_error=...
   useEffect(() => {
