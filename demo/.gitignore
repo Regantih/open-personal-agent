@@ -13,3 +13,6 @@ test-voice.mp3
 .elevenlabs-key*
 dbg*.png
 serve*.log
+f*-*.png
+dbg*
+build*/

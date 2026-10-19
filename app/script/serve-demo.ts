@@ -21,17 +21,39 @@ async function main() {
 
   // Content-aware scenario (survives reruns): if the turn already has a tool
   // result, summarize; if the user mentions a browser/open -> real T3
-  // browser_open driving real Chromium; otherwise a plain reply.
+  // browser_open driving real Chromium; "remember" stores a fact; "book/fly"
+  // runs a real flight search then a T3 booking the user must approve.
   setScriptedModel((req) => {
     const lastUser = [...req.messages].reverse().find((m) => m.role === "user");
     const content = JSON.stringify(lastUser?.content ?? "");
     if (/tool_result/.test(content)) {
-      return scriptOutput({ say: "Done — github.com is open in my Chromium session. Open the Browser tab to watch it live, click into the view to take over, or tell me to read the page or close it." });
+      if (/booking_id|order_reference/.test(content)) {
+        return scriptOutput({ say: "Booked — paid with a single-use card capped at the fare, and it's on your calendar. The approval card, the signed mandate, and the spend cap all did their job." });
+      }
+      // After a flight search, book the first offer — this is T3, so the
+      // turn pauses on a real approval card instead of executing.
+      const offer = content.match(/off_[a-f0-9]{10}/)?.[0];
+      if (offer) {
+        return scriptOutput({ tool: "book_flight", input: { offer_id: offer, seat_preference: "aisle" } });
+      }
+      if (/seat_preference|statement/.test(content)) {
+        return scriptOutput({ say: "Remembered — aisle seats on flights over two hours. It lives in the Memory tab with provenance, and you can export or delete it anytime." });
+      }
+      if (/browser|github|untrusted_content/i.test(content)) {
+        return scriptOutput({ say: "Done — github.com is open in my Chromium session. Open the Browser tab to watch it live, click into the view to take over, or tell me to read the page or close it." });
+      }
+      return scriptOutput({ say: "Done." });
+    }
+    if (/remember|aisle|prefer/i.test(content)) {
+      return scriptOutput({ tool: "remember", input: { statement: "Prefers aisle seats on flights over two hours", category: "preference", key: "travel.seat_preference", scope: "travel.preferences", sensitivity: "low" } });
+    }
+    if (/book|flight|fly|trip/i.test(content)) {
+      return scriptOutput({ tool: "search_flights", input: { origin: "DFW", destination: "SFO", date: "2026-11-06" } });
     }
     if (/browser|github|open a page|open github/i.test(content)) {
       return scriptOutput({ tool: "browser_open", input: { url: "https://github.com/Regantih/open-personal-agent" } });
     }
-    return scriptOutput({ say: "On it — for this recording, ask me to open a page in the browser (e.g. \"open github.com/Regantih/open-personal-agent in your browser\")." });
+    return scriptOutput({ say: "On it — for this recording, try: \"remember I prefer aisle seats\", \"book a flight to SFO on November 6th\", or \"open github.com/Regantih/open-personal-agent in your browser\"." });
   });
 
   const app = express();

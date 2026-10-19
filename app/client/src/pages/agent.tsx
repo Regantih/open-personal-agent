@@ -547,6 +547,7 @@ function BrowserTab() {
 
 function PolicyTab({ state }: { state: StateSnapshot }) {
   const { toast } = useToast();
+  const voiceStatus = useQuery<{ tts: boolean }>({ queryKey: ["/api/voice/status"], queryFn: getQueryFn({ on401: "returnNull" }) });
   const [limit, setLimit] = useState(String(state.settings.standingLimitUsd));
   const update = useMutation({
     mutationFn: async (body: Record<string, unknown>) => (await apiRequest("POST", "/api/settings", body)).json(),
@@ -608,7 +609,7 @@ function PolicyTab({ state }: { state: StateSnapshot }) {
           <div className="mt-2 flex items-center justify-between text-xs"><span>Web chat</span><Badge>Active</Badge></div>
           <div className="mt-1 flex items-center justify-between text-xs"><span>SMS (Twilio webhook)</span><Badge variant="outline" data-testid="status-sms">{s.smsConfigured ? "Configured" : "Needs number"}</Badge></div>
           <div className="mt-1 flex items-center justify-between text-xs"><span>Email (inbound + outbound)</span><Badge variant="outline" data-testid="status-email">{s.emailConfigured ? "Configured" : "Simulated"}</Badge></div>
-          <div className="mt-1 flex items-center justify-between text-xs"><span>Voice</span><Badge variant="outline">Roadmap</Badge></div>
+          <div className="mt-1 flex items-center justify-between text-xs"><span>Voice (mic + ElevenLabs TTS)</span><Badge variant="outline" data-testid="status-voice">{voiceStatus.data?.tts ? "Configured" : "Mic only"}</Badge></div>
           <div className="mt-1 flex items-center justify-between text-xs"><span>Orchestrator / tracing</span><Badge variant="outline" data-testid="status-infra">{s.orchestrator}{s.tracing ? " + langfuse" : ""}</Badge></div>
         </div>
       </div>
