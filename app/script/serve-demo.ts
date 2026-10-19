@@ -42,10 +42,16 @@ async function main() {
       if (/pnl_|widgets/.test(content)) {
         return scriptOutput({ say: "Done — your Money watch panel is live in the Panels tab. It reads real store data: subscriptions, bookings, and today's spend." });
       }
+      if (/transcript|"to":"|call/i.test(content)) {
+        return scriptOutput({ say: "Called Monarch — I'm an AI and I said so up front, then confirmed your table for two at 7pm tomorrow. The transcript is in the Data tab." });
+      }
       if (/browser|github|untrusted_content/i.test(content)) {
         return scriptOutput({ say: "Done — github.com is open in my Chromium session. Open the Browser tab to watch it live, click into the view to take over, or tell me to read the page or close it." });
       }
       return scriptOutput({ say: "Done." });
+    }
+    if (/call|phone|confirm the|dial/i.test(content)) {
+      return scriptOutput({ tool: "call_start", input: { to: "+12145550100", purpose: "Confirm the dinner reservation for two at 7pm tomorrow under Regan" } });
     }
     if (/panel|dashboard/i.test(content)) {
       return scriptOutput({ tool: "panel_create", input: { title: "Money watch", widgets: [{ type: "subscriptions" }, { type: "bookings", limit: 3 }, { type: "usage" }] } });
