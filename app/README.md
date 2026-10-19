@@ -26,7 +26,7 @@ This is a reference implementation of the [playbook](../docs/). It is small on p
 | Risk policy engine, approvals, kill switch, taint escalation | Real |
 | Mandate signing and verification | Real HMAC-SHA256 over AP2-shaped intent + payment objects |
 | OMF export and import with schema validation | Real |
-| SMS webhook with Twilio signature check | Verified end-to-end locally (`npm run test:channels`); needs a live Twilio number for production traffic |
+| SMS webhook with Twilio signature check | Verified end-to-end locally (`npm run test:channels`); needs a live Twilio number for production traffic. WhatsApp works over the same endpoint — Twilio's `whatsapp:` sender prefix normalizes to the bound number |
 | Email channel | Real inbound webhook (Mailgun signature or shared secret) + outbound via Resend/SMTP; simulated by default |
 | Calendar, inbox, subscriptions | Sample data in SQLite — or **real Google Calendar + Gmail** when a user connects their Google account (Settings → Connections, `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`/`PUBLIC_BASE_URL`). Remote data mirrors into the store so the panels show live state; every send still goes through the normal approval tiers |
 | Flight search and booking | Sample inventory with fictional carriers — or **live Duffel inventory + real orders** with `DUFFEL_API_KEY` (test keys run the same code path) |
@@ -38,9 +38,10 @@ This is a reference implementation of the [playbook](../docs/). It is small on p
 | Site-login vault | Real — AES-256-GCM website credentials the agent fills into its own browser (`browser_login`, T3). Secrets enter only via `POST /api/credentials` (Settings → Site logins), are never in tool params/approval rows, never returned by the API, and fills fail closed if the page host doesn't match the credential site |
 | Voice | Browser Web Speech STT → normal turn pipeline → ElevenLabs TTS (`ELEVENLABS_API_KEY`); mic + speaker buttons in the composer |
 | Outbound calls | Simulated line (scripted transcript) — or **real calls** with `TWILIO_ACCOUNT_SID`/`TWILIO_AUTH_TOKEN`/`TWILIO_FROM_NUMBER`/`PUBLIC_BASE_URL`: T2-gated, opens with a spoken AI disclosure, hourly cap, transcript (never audio) in the Data tab, kill switch hangs up live calls. Two-way conversation needs a realtime voice key (`OPA_REALTIME_API_KEY` or `OPENAI_API_KEY`); without it a one-way disclosed announcement plays |
+| Panels | Custom dashboards declared in chat (`panel_create`/`panel_list`/`panel_delete`, T1/T0) — fixed widget types bound to real store data (calendar, inbox, subscriptions, bookings, calls, facts, approvals, usage, note), rendered in the Panels tab. No generated code; definitions are validated and capped |
 | Storage | SQLite (default) or PostgreSQL via `DATABASE_URL` — same `Store` interface, verified against Postgres 16 |
 | Rate limits & headers | Fixed-window limiter on `/api/auth/*` and message/webhook routes; CSP/HSTS/security headers on every response (`server/security.ts`) |
-| Eval suite | 79 deterministic tasks (`npm run eval`) |
+| Eval suite | 85 deterministic tasks (`npm run eval`) |
 
 ## Run it
 
@@ -129,7 +130,7 @@ After connecting, `get_calendar`/`read_inbox` mirror live data into the store (d
 2. Set the number's incoming message webhook to `POST {PUBLIC_BASE_URL}/api/channels/sms`.
 3. Set `TWILIO_AUTH_TOKEN`, `PUBLIC_BASE_URL`, and `OWNER_PHONE`, then restart.
 
-The webhook rejects requests with an invalid `X-Twilio-Signature` and replies with TwiML. `npm run test:channels` boots a real server and verifies signed-vs-forged requests end to end.
+The webhook rejects requests with an invalid `X-Twilio-Signature` and replies with TwiML. `npm run test:channels` boots a real server and verifies signed-vs-forged requests end to end — including a `whatsapp:` sender, so pointing a WhatsApp-enabled Twilio sender (sandbox or approved) at the same webhook just works.
 
 ### Use a self-hosted (vLLM) model
 
@@ -173,9 +174,9 @@ Each inbound turn, approval decision, and background check becomes a workflow (`
 ### Evals and channel tests
 
 ```bash
-npm run eval            # 58 deterministic tasks; no API key needed
-npm run eval -- e14     # run one task (e50–t08 cover channels + tenancy)
-npm run test:channels   # signed SMS + email webhooks against a live server
+npm run eval            # 85 deterministic tasks; no API key needed
+npm run eval -- e14     # run one task (e50–p06 cover channels, tenancy, browser, vault, calls, panels)
+npm run test:channels   # signed SMS/WhatsApp + voice + email webhooks against a live server
 ```
 
 The eval harness scripts the model (`setScriptedModel` in `server/agent/llm.ts`) so it tests the real machinery — policy decisions, mandate signing and verification, taint escalation, the kill switch — deterministically.

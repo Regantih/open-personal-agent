@@ -7,6 +7,7 @@ import { emailSender } from "./email";
 import * as browser from "./browser";
 import * as calls from "./calls";
 import * as credentials from "./credentials";
+import * as panels from "./panels";
 import * as google from "./providers/google";
 
 // Each tool declares the policy action it performs. The runner (agent.ts) evaluates that action against the Risk Policy
@@ -402,6 +403,49 @@ export const tools: ToolDef[] = [
       if (provider.end && c.providerRef) await provider.end(c.providerRef);
       await ctx.store.updateCall(c.id, { status: "ended_by_user", endedAt: Date.now() });
       return { ended: c.id };
+    },
+  },
+  {
+    name: "panel_create",
+    description: "Build a custom dashboard panel for the user — a card in the Panels tab composed of fixed widgets bound to real data (calendar, inbox, subscriptions, bookings, calls, facts, approvals, usage, or a static note). Use when the user asks to track or watch something.",
+    input_schema: {
+      type: "object",
+      properties: {
+        title: { type: "string", description: "panel title, e.g. 'Money watch'" },
+        widgets: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              type: { type: "string", enum: [...panels.WIDGET_TYPES], description: "data source for the widget" },
+              title: { type: "string" },
+              limit: { type: "integer", description: "max rows (1-20)" },
+              text: { type: "string", description: "required for type 'note'" },
+            },
+            required: ["type"],
+          },
+        },
+      },
+      required: ["title", "widgets"],
+    },
+    prepare: (i) => ({ action: "panels.write", summary: `Create panel "${String(i.title ?? "").slice(0, 40)}"` }),
+    async execute(i, ctx) { return panels.createPanel(ctx.store, { title: String(i.title ?? ""), widgets: i.widgets ?? [] }); },
+  },
+  {
+    name: "panel_list",
+    description: "List the user's custom dashboard panels.",
+    input_schema: { type: "object", properties: {}, required: [] },
+    prepare: () => ({ action: "panels.read", summary: "List panels" }),
+    async execute(_i, ctx) { return { panels: await panels.listPanels(ctx.store) }; },
+  },
+  {
+    name: "panel_delete",
+    description: "Remove a dashboard panel by id.",
+    input_schema: { type: "object", properties: { panel_id: { type: "string" } }, required: ["panel_id"] },
+    prepare: (i) => ({ action: "panels.write", summary: `Delete panel ${i.panel_id}` }),
+    async execute(i, ctx) {
+      if (!(await panels.deletePanel(ctx.store, String(i.panel_id)))) throw new Error(`No panel ${i.panel_id}`);
+      return { deleted: i.panel_id };
     },
   },
 ];

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest, getQueryFn, queryClient, API_BASE } from "@/lib/queryClient";
-import type { AgentEvent, Approval, Fact, Message, Settings, StateSnapshot, Tier } from "@shared/schema";
+import type { AgentEvent, Approval, Fact, Message, PanelWidget, Settings, StateSnapshot, Tier } from "@shared/schema";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -924,6 +924,65 @@ function ApprovalsTab({ approvals }: { approvals: Approval[] }) {
   );
 }
 
+// Panels: custom dashboards declared via chat ("build me a panel tracking X").
+// Fixed widget types bound to real snapshot data — no generated code.
+function PanelsTab({ state }: { state: StateSnapshot }) {
+  const lim = (w: PanelWidget) => w.limit ?? 5;
+  const rows = (w: PanelWidget): { primary: string; secondary?: string }[] => {
+    switch (w.type) {
+      case "calendar": return state.calendar.slice(0, lim(w)).map((c) => ({ primary: c.title, secondary: fmtDay(c.start) }));
+      case "inbox": return state.inbox.slice(0, lim(w)).map((e) => ({ primary: e.subject, secondary: e.sender }));
+      case "subscriptions": return state.subscriptions.slice(0, lim(w)).map((s) => ({ primary: s.merchant, secondary: `$${s.monthlyUsd.toFixed(2)}/mo · ${s.status}` }));
+      case "bookings": return state.bookings.slice(0, lim(w)).map((b) => ({ primary: `${b.merchant}: ${b.description}`, secondary: `$${b.amountUsd.toFixed(2)} · ${b.status}` }));
+      case "calls": return state.calls.slice(0, lim(w)).map((c) => ({ primary: `${c.to}: ${c.purpose}`, secondary: c.status }));
+      case "facts": return state.facts.slice(0, lim(w)).map((f) => ({ primary: f.statement, secondary: f.category }));
+      case "approvals": return state.approvals.filter((a) => a.status === "pending").slice(0, lim(w)).map((a) => ({ primary: a.summary, secondary: a.tier }));
+      case "usage": {
+        const u = state.settings.usageToday;
+        return [
+          { primary: "Planner turns today", secondary: String(u.turns) },
+          { primary: "Tokens in / out", secondary: `${u.inputTokens} / ${u.outputTokens}` },
+          ...(state.settings.freeTierRemaining !== null ? [{ primary: "Free tier left", secondary: String(state.settings.freeTierRemaining) }] : []),
+        ];
+      }
+      case "note": return [{ primary: w.text ?? "" }];
+      default: return [{ primary: `unknown widget "${w.type}"` }];
+    }
+  };
+  return (
+    <div>
+      <p className="mb-4 text-xs text-muted-foreground">Custom dashboards from real data. Ask the agent to build one — "make me a panel tracking subscriptions and bookings."</p>
+      {state.panels.length ? (
+        <div className="grid gap-3">
+          {state.panels.map((p) => (
+            <div key={p.id} className="rounded-lg border bg-card p-3" data-testid={`panel-${p.id}`}>
+              <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{p.title}</div>
+              <div className="mt-2 grid gap-3 sm:grid-cols-2">
+                {p.widgets.map((w, i) => (
+                  <div key={i} className="rounded-md border bg-background p-2.5" data-testid={`panel-${p.id}-widget-${i}`}>
+                    <div className="text-[11px] font-medium text-muted-foreground">{w.title ?? w.type}</div>
+                    <ul className="mt-1 space-y-1">
+                      {rows(w).map((r, j) => (
+                        <li key={j} className="text-xs">
+                          <span className="[overflow-wrap:anywhere]">{r.primary}</span>
+                          {r.secondary && <span className="ml-1.5 text-[11px] text-muted-foreground">{r.secondary}</span>}
+                        </li>
+                      ))}
+                      {!rows(w).length && <li className="text-xs text-muted-foreground">Nothing here yet.</li>}
+                    </ul>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="text-sm text-muted-foreground" data-testid="text-no-panels">No panels yet. Ask the agent to build one from your data.</p>
+      )}
+    </div>
+  );
+}
+
 function ControlPanel({ state }: { state: StateSnapshot }) {
   const pendingCount = state.approvals.filter((a) => a.status === "pending").length;
   return (
@@ -936,6 +995,7 @@ function ControlPanel({ state }: { state: StateSnapshot }) {
           <TabsTrigger value="activity" className="px-2.5 data-[state=active]:bg-muted sm:px-3" data-testid="tab-activity">Activity</TabsTrigger>
           <TabsTrigger value="memory" className="px-2.5 data-[state=active]:bg-muted sm:px-3" data-testid="tab-memory">Memory</TabsTrigger>
           <TabsTrigger value="data" className="px-2.5 data-[state=active]:bg-muted sm:px-3" data-testid="tab-data">Data</TabsTrigger>
+          <TabsTrigger value="panels" className="px-2.5 data-[state=active]:bg-muted sm:px-3" data-testid="tab-panels">Panels</TabsTrigger>
           <TabsTrigger value="browser" className="px-2.5 data-[state=active]:bg-muted sm:px-3" data-testid="tab-browser">Browser</TabsTrigger>
           <TabsTrigger value="policy" className="px-2.5 data-[state=active]:bg-muted sm:px-3" data-testid="tab-policy">Policy</TabsTrigger>
         </TabsList>
@@ -945,6 +1005,7 @@ function ControlPanel({ state }: { state: StateSnapshot }) {
         <TabsContent value="activity" className="mt-0"><ActivityTab events={state.events} /></TabsContent>
         <TabsContent value="memory" className="mt-0"><MemoryTab facts={state.facts} /></TabsContent>
         <TabsContent value="data" className="mt-0"><DataTab state={state} /></TabsContent>
+        <TabsContent value="panels" className="mt-0"><PanelsTab state={state} /></TabsContent>
         <TabsContent value="browser" className="mt-0"><BrowserTab /></TabsContent>
         <TabsContent value="policy" className="mt-0"><PolicyTab state={state} /></TabsContent>
       </div>

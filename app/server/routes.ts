@@ -75,6 +75,7 @@ async function snapshot(ctx: Ctx): Promise<StateSnapshot> {
       freeTierLimit: freeLeft === null ? null : FREE_PLANNER_TURNS_PER_DAY,
     },
     calls: (await listCalls(ctx.userId)).map(({ userId, ...c }) => c),
+    panels: await store.getSetting("panels", []),
     suggestions: await store.getSetting("action_suggestions", DEFAULT_SUGGESTIONS),
     policy: { version: policy.version, defaultTier: policy.default_tier ?? "T3", actions: policy.actions.map((a) => ({ match: a.match, tier: a.tier })) },
   };
@@ -85,7 +86,7 @@ export function validTwilioSignature(req: Request): boolean {
   const token = process.env.TWILIO_AUTH_TOKEN;
   if (!token) return false;
   const url = (process.env.PUBLIC_BASE_URL || "") + req.originalUrl;
-  const params = req.body as Record<string, string>;
+  const params = (req.body ?? {}) as Record<string, string>;
   const data = url + Object.keys(params).sort().map((k) => k + params[k]).join("");
   const expected = createHmac("sha1", token).update(data).digest("base64");
   const got = String(req.headers["x-twilio-signature"] || "");

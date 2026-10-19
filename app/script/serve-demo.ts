@@ -39,10 +39,16 @@ async function main() {
       if (/seat_preference|statement/.test(content)) {
         return scriptOutput({ say: "Remembered — aisle seats on flights over two hours. It lives in the Memory tab with provenance, and you can export or delete it anytime." });
       }
+      if (/pnl_|widgets/.test(content)) {
+        return scriptOutput({ say: "Done — your Money watch panel is live in the Panels tab. It reads real store data: subscriptions, bookings, and today's spend." });
+      }
       if (/browser|github|untrusted_content/i.test(content)) {
         return scriptOutput({ say: "Done — github.com is open in my Chromium session. Open the Browser tab to watch it live, click into the view to take over, or tell me to read the page or close it." });
       }
       return scriptOutput({ say: "Done." });
+    }
+    if (/panel|dashboard/i.test(content)) {
+      return scriptOutput({ tool: "panel_create", input: { title: "Money watch", widgets: [{ type: "subscriptions" }, { type: "bookings", limit: 3 }, { type: "usage" }] } });
     }
     if (/remember|aisle|prefer/i.test(content)) {
       return scriptOutput({ tool: "remember", input: { statement: "Prefers aisle seats on flights over two hours", category: "preference", key: "travel.seat_preference", scope: "travel.preferences", sensitivity: "low" } });

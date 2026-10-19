@@ -24,6 +24,7 @@ async function main() {
   const { registerRoutes } = await import("../server/routes");
   const { setScriptedModel, scriptOutput } = await import("../server/agent/llm");
   const db = await import("../server/agent/db");
+  const store2 = db.storeFor(db.LOCAL_USER);
 
   const app = express();
   app.use(express.json());
@@ -61,6 +62,42 @@ async function main() {
   });
   check("sms: forged signature rejected with 403", bad.status === 403, `status=${bad.status}`);
 
+  // --- WhatsApp: From is whatsapp:+<num> — normalizes to the owner number ---
+  const waParams = { From: "whatsapp:+15551234567", Body: "RESUME", To: "whatsapp:+15557654321" };
+  const waSig = createHmac("sha1", process.env.TWILIO_AUTH_TOKEN!).update(`${base}/api/channels/sms` + Object.keys(waParams).sort().map((k) => k + (waParams as any)[k]).join("")).digest("base64");
+  const waResp = await fetch(`${base}/api/channels/sms`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded", "x-twilio-signature": waSig },
+    body: new URLSearchParams(waParams).toString(),
+  });
+  const waTwiml = await waResp.text();
+  check("whatsapp: whatsapp: From handled like SMS", waResp.status === 200 && /Back on/i.test(waTwiml), `status=${waResp.status} body=${waTwiml.slice(0, 120)}`);
+
+  // --- Voice: TwiML opens with the AI disclosure; forged status rejected ---
+  const call = await store2.addCall("+15557654321", "book a table for four Friday at 7pm");
+  const voiceUrl = `${base}/api/channels/voice?callId=${call.id}`;
+  const vSig = createHmac("sha1", process.env.TWILIO_AUTH_TOKEN!).update(voiceUrl).digest("base64");
+  const vResp = await fetch(voiceUrl, { headers: { "x-twilio-signature": vSig } });
+  const vTwiml = await vResp.text();
+  check("voice: TwiML speaks AI disclosure first", vResp.status === 200 && /automated assistant/i.test(vTwiml) && vTwiml.includes("<Hangup/>"), `status=${vResp.status} body=${vTwiml.slice(0, 160)}`);
+
+  const stParams = { CallSid: "CA_test_sid_1", CallStatus: "completed" };
+  await store2.updateCall(call.id, { providerRef: "CA_test_sid_1" });
+  const stSig = createHmac("sha1", process.env.TWILIO_AUTH_TOKEN!).update(`${base}/api/channels/voice/status` + Object.keys(stParams).sort().map((k) => k + (stParams as any)[k]).join("")).digest("base64");
+  const stResp = await fetch(`${base}/api/channels/voice/status`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded", "x-twilio-signature": stSig },
+    body: new URLSearchParams(stParams).toString(),
+  });
+  const after = await store2.getCall(call.id);
+  check("voice: status callback marks call completed", stResp.status === 204 && after?.status === "completed", `status=${stResp.status} call=${after?.status}`);
+  const stBad = await fetch(`${base}/api/channels/voice/status`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded", "x-twilio-signature": "forged" },
+    body: new URLSearchParams(stParams).toString(),
+  });
+  check("voice: forged status callback rejected with 403", stBad.status === 403, `status=${stBad.status}`);
+
   // --- Email: owner command to the agent address gets a reply ---
   setScriptedModel(async (req) => {
     if (req.messages.length && JSON.stringify(req.messages.at(-1)).includes("tool_result")) {
@@ -77,7 +114,7 @@ async function main() {
   check("email: owner command answered", mailResp.status === 200 && mailJson.delivered === "replied" && /board prep/i.test(mailJson.reply ?? ""), `status=${mailResp.status} body=${JSON.stringify(mailJson).slice(0, 200)}`);
 
   // --- Email: third-party mail goes to the inbox, not the agent ---
-  const store = db.storeFor(db.LOCAL_USER);
+  const store = store2;
   const inboxBefore = (await store.listInbox()).length;
   const third = await fetch(`${base}/api/channels/email`, {
     method: "POST",

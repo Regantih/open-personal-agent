@@ -1160,4 +1160,97 @@ export const tasks: EvalTask[] = [
       { say_to_agent: "RESUME" },
     ],
   },
+  {
+    id: "p01", name: "Panels: create is T1 and writes a validated panel", category: "panels",
+    script: [
+      ...turn("Build me a panel tracking money", [
+        { tool: "panel_create", input: { title: "Money watch", widgets: [{ type: "subscriptions" }, { type: "bookings", limit: 3 }] } },
+        { say: "Panel created." },
+      ]),
+      { expect: { approvalsPending: 0, tool: { name: "panel_create", status: "ok" } } },
+      { run: async (h) => {
+        const panels = await h.store.getSetting<any[]>("panels", []);
+        const p = panels.find((p) => p.title === "Money watch");
+        if (!p) throw new Error("panel not persisted");
+        if (p.widgets.length !== 2 || p.widgets[0].type !== "subscriptions") throw new Error("widgets not stored");
+        if (!/^pnl_[0-9a-f]{8}$/.test(p.id)) throw new Error(`bad panel id ${p.id}`);
+        h.stash.panelId = p.id;
+      } },
+    ],
+  },
+  {
+    id: "p02", name: "Panels: invalid widget types rejected, nothing persisted", category: "panels",
+    script: [
+      ...turn("Build me a panel that runs arbitrary code", [
+        { tool: "panel_create", input: { title: "Evil", widgets: [{ type: "custom_html", title: "x" }] } },
+        { say: "I can't do that." },
+      ]),
+      { expect: { approvalsPending: 0, tool: { name: "panel_create", status: "error" } } },
+      { run: async (h) => {
+        const panels = await h.store.getSetting<any[]>("panels", []);
+        if (panels.some((p) => p.title === "Evil")) throw new Error("invalid panel was persisted");
+      } },
+    ],
+  },
+  {
+    id: "p03", name: "Panels: read/list is T0, delete is T1", category: "panels",
+    script: [
+      { run: async (h) => {
+        const { evaluate } = h.policy;
+        const rd = await evaluate("panels.read", { tainted: false, amountUsd: null, store: h.store });
+        if (rd.tier !== "T0") throw new Error(`panels.read tiered ${rd.tier}`);
+        const wr = await evaluate("panels.write", { tainted: false, amountUsd: null, store: h.store });
+        if (wr.tier !== "T1") throw new Error(`panels.write tiered ${wr.tier}`);
+      } },
+    ],
+  },
+  {
+    id: "p04", name: "Panels: delete removes only the named panel", category: "panels",
+    script: [
+      { run: async (h) => {
+        const { createPanel } = await import("../server/agent/panels");
+        const a = await createPanel(h.store, { title: "Keep", widgets: [{ type: "usage" }] });
+        const b = await createPanel(h.store, { title: "Drop", widgets: [{ type: "note", text: "hi" }] });
+        h.stash.keep = a.id; h.stash.drop = b.id;
+      } },
+      ...turn("Remove the Drop panel", (h) => [
+        { tool: "panel_delete", input: { panel_id: h.stash.drop } },
+        { say: "Removed." },
+      ]),
+      { expect: { approvalsPending: 0, tool: { name: "panel_delete", status: "ok" } } },
+      { run: async (h) => {
+        const panels = await h.store.getSetting<any[]>("panels", []);
+        if (panels.some((p) => p.id === h.stash.drop)) throw new Error("deleted panel still present");
+        if (!panels.some((p) => p.id === h.stash.keep)) throw new Error("wrong panel deleted");
+      } },
+    ],
+  },
+  {
+    id: "p05", name: "Panels: panels are isolated per user", category: "panels",
+    script: [
+      { run: async (h) => {
+        const { createPanel, listPanels } = await import("../server/agent/panels");
+        const a = await h.db.findOrCreateUser({ email: "alice@example.com" });
+        const b = await h.db.findOrCreateUser({ email: "bob@example.com" });
+        await createPanel(h.db.storeFor(a.id), { title: "Alice board", widgets: [{ type: "calendar" }] });
+        if ((await listPanels(h.db.storeFor(b.id))).length !== 0) throw new Error("alice's panel leaked to bob");
+        const panels = await listPanels(h.db.storeFor(a.id));
+        if (!panels.some((p) => p.title === "Alice board")) throw new Error("alice's panel missing");
+      } },
+    ],
+  },
+  {
+    id: "p06", name: "Panels: caps enforced — widget and panel limits", category: "panels",
+    script: [
+      { run: async (h) => {
+        const { createPanel, listPanels } = await import("../server/agent/panels");
+        const existing = (await listPanels(h.store)).length;
+        for (let i = existing; i < 10; i++) await createPanel(h.store, { title: `P${i}`, widgets: [{ type: "usage" }] });
+        const err = await createPanel(h.store, { title: "Over", widgets: [{ type: "usage" }] }).then(() => null, (e) => e);
+        if (!err || !/limit/i.test(err.message)) throw new Error("panel cap not enforced");
+        const wide = await createPanel(h.store, { title: "Wide", widgets: Array(7).fill({ type: "usage" }) }).then(() => null, (e) => e);
+        if (!wide || !/at most/i.test(wide.message)) throw new Error("widget cap not enforced");
+      } },
+    ],
+  },
 ];

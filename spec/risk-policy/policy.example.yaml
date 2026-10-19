@@ -74,6 +74,10 @@ actions:
     tier: T0
   - match: "call.end"
     tier: T1
+  - match: "panels.read"
+    tier: T0
+  - match: "panels.write"
+    tier: T1
 
 untrusted_origin:
   sources: [email_body, web_content, attachment, external_agent]

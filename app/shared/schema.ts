@@ -193,6 +193,9 @@ export interface ActionSuggestion {
   prompt: string;
 }
 
+export interface PanelWidget { type: string; title?: string; limit?: number; text?: string }
+export interface Panel { id: string; title: string; widgets: PanelWidget[]; createdAt: number }
+
 export interface Call {
   id: number;
   to: string;
@@ -217,6 +220,7 @@ export interface StateSnapshot {
   outbox: Outbox[];
   settings: Settings;
   calls: Call[];
+  panels: Panel[];
   suggestions: ActionSuggestion[];
   policy: { version: string; defaultTier: Tier; actions: { match: string; tier: Tier }[] };
 }
